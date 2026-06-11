@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { normalizeDrip } from './ansi';
 import type {
   AgyTransport,
@@ -102,7 +105,12 @@ export class AgyProcess implements AgyTransport {
       });
       proc.onExit(({ exitCode }: { exitCode: number }) => {
         this.ptyProc = null;
-        resolve({ text: normalizeDrip(raw), exitCode });
+        const conversationId = this.parseConversationId();
+        resolve({
+          text: normalizeDrip(raw),
+          conversationId,
+          exitCode,
+        });
       });
       // Defensive: a hard ceiling above --print-timeout.
       const ceilingMs = (options.printTimeoutSeconds ?? 120) * 1000 + 15000;
@@ -132,6 +140,25 @@ export class AgyProcess implements AgyTransport {
 
   dispose(): void {
     this.cancel();
+  }
+
+  private parseConversationId(): string | undefined {
+    try {
+      const logPath = path.join(
+        os.homedir(),
+        '.gemini',
+        'antigravity-cli',
+        'cli.log',
+      );
+      if (!fs.existsSync(logPath)) {
+        return undefined;
+      }
+      const log = fs.readFileSync(logPath, 'utf-8');
+      const match = /Created conversation ([a-f0-9\-]+)/i.exec(log);
+      return match ? match[1] : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private runCapture(cmd: string[]): Promise<string> {
