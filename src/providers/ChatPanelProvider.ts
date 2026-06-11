@@ -36,11 +36,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private async refreshState(): Promise<void> {
     this.post({ type: 'state', status: 'checking' });
     const a = await this.transport.checkAvailability(false);
-    this.post(
-      a.found
-        ? { type: 'state', status: 'ready', detail: a.version }
-        : { type: 'state', status: 'missing-cli', detail: a.detail },
-    );
+    if (!a.found) {
+      this.post({ type: 'state', status: 'missing-cli', detail: a.detail });
+    } else if (this.turn === 0) {
+      this.post({ type: 'state', status: 'onboarding', detail: a.version });
+    } else {
+      this.post({ type: 'state', status: 'ready', detail: a.version });
+    }
   }
 
   private async handle(m: WebviewToHost): Promise<void> {
