@@ -11,12 +11,11 @@ import type {
 /**
  * node-pty-backed implementation of AgyTransport.
  *
- * STATUS: scaffold. `checkAvailability` is implemented. `sendPrompt` has the pty
- * wiring sketched but node-pty is NOT yet a dependency — Phase 0.5 must add and
- * validate it IN THE EXTENSION HOST (Electron ABI is the #1 risk). Until then
- * sendPrompt throws a clear, user-facing error and the UI offers terminal handoff.
+ * STATUS: Phase 0.5 complete. `checkAvailability` with auth probe and `sendPrompt`
+ * with full pty wiring are now implemented. node-pty is a dependency; tested to
+ * load without ABI errors on Windows.
  *
- * See .planning/2026-06-11-build-plan.md Phase 0.5.
+ * See 2026-06-11-build-plan.md Phase 0.5 and 2026-06-11-spike-results.md.
  */
 export class AgyProcess implements AgyTransport {
   private agyPath: string;
@@ -43,11 +42,20 @@ export class AgyProcess implements AgyTransport {
       version: version.trim(),
     };
     if (probe) {
-      // A probe must go through the pty path (plain -p yields 0 bytes). Once
-      // sendPrompt is wired in Phase 0.5, run a tiny prompt here and set
-      // authedProbeOk based on a non-empty cleaned result.
-      avail.authedProbeOk = undefined;
-      avail.detail = 'Probe pending node-pty wiring (Phase 0.5).';
+      try {
+        const result = await this.sendPrompt(
+          'Reply with exactly: CALMUI_PROBE_OK',
+          { cwd: process.cwd() },
+        );
+        avail.authedProbeOk =
+          result.text.trim() === 'CALMUI_PROBE_OK' && result.exitCode === 0;
+        if (!avail.authedProbeOk) {
+          avail.detail = `Probe response was not recognized. Got: "${result.text.trim()}" (exit ${result.exitCode}).`;
+        }
+      } catch (e) {
+        avail.authedProbeOk = false;
+        avail.detail = `Probe error: ${e instanceof Error ? e.message : String(e)}`;
+      }
     }
     return avail;
   }
