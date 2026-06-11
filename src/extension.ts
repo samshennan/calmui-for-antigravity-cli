@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AgyProcess } from './transport/AgyProcess';
 import { ChatPanelProvider } from './providers/ChatPanelProvider';
+import { runDiagnostics } from './diagnostics';
 
 export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('calmui-agy');
@@ -15,15 +16,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('calmui-agy.focusChat', () =>
       vscode.commands.executeCommand('calmui-agy.chatView.focus'),
     ),
-    vscode.commands.registerCommand('calmui-agy.runDiagnostics', async () => {
-      const a = await transport.checkAvailability(false);
-      const msg = a.found
-        ? `agy ${a.version ?? '(version unknown)'} found at ${a.resolvedPath}.`
-        : a.detail ?? 'agy not found.';
-      void vscode.window.showInformationMessage(`CalmUI Diagnostics: ${msg}`);
-    }),
-    vscode.commands.registerCommand('calmui-agy.openInTerminal', () =>
-      transport.openInteractiveTerminal(),
+    vscode.commands.registerCommand('calmui-agy.runDiagnostics', () =>
+      runDiagnostics(transport, agyPath),
+    ),
+    vscode.commands.registerCommand('calmui-agy.openInTerminal', (prompt?: string) =>
+      transport.openInteractiveTerminal(prompt),
     ),
   );
 }
