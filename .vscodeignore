@@ -1,0 +1,16 @@
+.planning/**
+src/**
+**/*.ts
+!dist/**
+**/*.map
+**/*.test.*
+esbuild.mjs
+tsconfig*.json
+vitest.config.ts
+*.md
+!README.md
+Icon.af
+**/*.svg
+!media/**
+node_modules/**
+.git/**

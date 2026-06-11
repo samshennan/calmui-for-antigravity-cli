@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- CalmUI for Antigravity CLI — monochrome activity-bar icon.
+     Uses currentColor so VS Code / Antigravity IDE themes it to match the active foreground. -->
+<svg viewBox="0 0 579 401" version="1.1" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;">
+    <g transform="matrix(1,0,0,1,-141.374511,-207.564212)" fill="currentColor">
+        <g transform="matrix(2.002768,0,0,0.206369,-434.482873,506.07012)">
+            <path d="M431.974,207.564C511.694,207.564 576.417,272.287 576.417,352.007C576.417,431.727 511.694,496.45 431.974,496.45C352.253,496.45 287.531,431.727 287.531,352.007C287.531,272.287 352.253,207.564 431.974,207.564ZM431.974,251.261C487.577,251.261 532.72,296.404 532.72,352.007C532.72,407.61 487.577,452.753 431.974,452.753C376.371,452.753 331.228,407.61 331.228,352.007C331.228,296.404 376.371,251.261 431.974,251.261Z"/>
+        </g>
+        <circle cx="431.974" cy="352.007" r="144.443"/>
+    </g>
+</svg>

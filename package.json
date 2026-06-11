@@ -1,0 +1,110 @@
+{
+  "name": "calmui-for-antigravity-cli",
+  "displayName": "CalmUI for Antigravity CLI",
+  "description": "A calm, lightweight quick-ask companion for Antigravity CLI (agy). Unofficial — not affiliated with Google.",
+  "version": "0.0.1",
+  "publisher": "veles",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samshennan/calmui-for-antigravity-cli.git"
+  },
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "main": "./dist/extension.js",
+  "icon": "media/icon-color.png",
+  "categories": [
+    "Other",
+    "Chat"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "calmui-agy",
+          "title": "CalmUI",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "calmui-agy": [
+        {
+          "id": "calmui-agy.chatView",
+          "name": "CalmUI",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "CalmUI for Antigravity CLI",
+      "properties": {
+        "calmui-agy.agyPath": {
+          "type": "string",
+          "default": "agy",
+          "description": "Absolute path to the agy CLI binary. Leave as 'agy' to resolve from PATH. Default Windows install: %LOCALAPPDATA%\\agy\\bin\\agy.exe"
+        },
+        "calmui-agy.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model override passed as --model on each prompt. Leave empty to use the agy default."
+        },
+        "calmui-agy.includeDirectories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra folders outside the workspace that agy can read. Passed as --add-dir on every prompt. Use absolute paths."
+        },
+        "calmui-agy.printTimeoutSeconds": {
+          "type": "number",
+          "default": 120,
+          "description": "Timeout for a single quick-ask prompt, passed as --print-timeout. The agy default is 5 minutes."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "calmui-agy.focusChat",
+        "title": "CalmUI: Focus Chat"
+      },
+      {
+        "command": "calmui-agy.runDiagnostics",
+        "title": "CalmUI: Run Diagnostics"
+      },
+      {
+        "command": "calmui-agy.openInTerminal",
+        "title": "CalmUI: Open Antigravity Terminal"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "calmui-agy.focusChat",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "build:dev": "node esbuild.mjs --dev",
+    "vscode:prepublish": "node esbuild.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/vscode": "^1.93.0",
+    "@vscode/vsce": "^3.9.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  }
+}
