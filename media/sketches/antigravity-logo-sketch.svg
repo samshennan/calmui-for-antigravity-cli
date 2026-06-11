@@ -1,0 +1,97 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="64" x2="432" y2="448" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EEF2F8"/>
+      <stop offset="1" stop-color="#D7DDE8"/>
+    </linearGradient>
+    <radialGradient id="planet" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(257 177) rotate(90) scale(82)">
+      <stop offset="0.1" stop-color="#283247"/>
+      <stop offset="0.7" stop-color="#131A27"/>
+      <stop offset="1" stop-color="#090D15"/>
+    </radialGradient>
+    <radialGradient id="shine" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(297 157) rotate(135) scale(35 28)">
+      <stop stop-color="#F6F8FF" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#F6F8FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="well" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(258 328) rotate(90) scale(36 84)">
+      <stop stop-color="#090D15"/>
+      <stop offset="0.65" stop-color="#1D2637"/>
+      <stop offset="1" stop-color="#7B879D" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softBlur" x="43" y="43" width="426" height="426" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.4"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="96" fill="#B8C0CD"/>
+
+  <path
+    d="M80 88
+       C118 70 165 74 214 73
+       C286 71 357 69 402 82
+       C431 91 442 118 442 150
+       C445 224 442 296 439 372
+       C438 408 432 435 408 446
+       C371 463 316 456 262 458
+       C190 461 124 460 94 447
+       C69 436 64 407 63 373
+       C59 307 59 232 63 151
+       C64 123 61 100 80 88Z"
+    fill="url(#bg)"
+    stroke="#161C28"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+
+  <g filter="url(#softBlur)" opacity="0.16">
+    <path
+      d="M90 92
+         C127 78 172 79 220 78
+         C289 77 350 76 394 88
+         C420 96 429 120 430 151
+         C433 223 431 295 427 366
+         C425 398 420 422 401 433
+         C368 450 317 447 264 447
+         C193 447 131 447 101 435
+         C79 426 75 398 74 366
+         C71 296 71 225 75 154
+         C76 127 75 106 90 92Z"
+      stroke="#0C1018"
+      stroke-width="16"
+      stroke-linecap="round"
+      stroke-linejoin="round"/>
+  </g>
+
+  <circle cx="257" cy="180" r="68" fill="url(#planet)"/>
+  <ellipse cx="242" cy="193" rx="17" ry="13" fill="#3A445A" opacity="0.28"/>
+  <ellipse cx="270" cy="214" rx="12" ry="9" fill="#3A445A" opacity="0.22"/>
+  <ellipse cx="299" cy="159" rx="28" ry="25" fill="url(#shine)"/>
+
+  <g transform="translate(0 2)">
+    <ellipse cx="256" cy="330" rx="118" ry="20" stroke="#6B7487" stroke-width="8" opacity="0.92"/>
+    <ellipse cx="256" cy="330" rx="92" ry="14" stroke="#4A5366" stroke-width="6" opacity="0.95"/>
+    <ellipse cx="256" cy="330" rx="60" ry="18" fill="url(#well)"/>
+    <path
+      d="M162 336
+         C192 317 229 312 258 313
+         C291 313 327 321 357 338"
+      stroke="#919AAF"
+      stroke-width="5"
+      stroke-linecap="round"
+      opacity="0.72"/>
+    <path
+      d="M350 324
+         C376 328 395 337 407 347"
+      stroke="#5D677B"
+      stroke-width="6"
+      stroke-linecap="round"
+      opacity="0.9"/>
+    <path
+      d="M109 344
+         C126 333 143 327 165 324"
+      stroke="#7D8799"
+      stroke-width="5"
+      stroke-linecap="round"
+      opacity="0.86"/>
+  </g>
+</svg>
