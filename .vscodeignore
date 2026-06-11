@@ -13,4 +13,8 @@ Icon.af
 **/*.svg
 !media/**
 node_modules/**
+!node_modules/node-pty/package.json
+!node_modules/node-pty/lib/**
+!node_modules/node-pty/prebuilds/**
+!node_modules/node-pty/build/Release/**
 .git/**
