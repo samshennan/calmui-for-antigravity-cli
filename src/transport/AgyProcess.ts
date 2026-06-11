@@ -22,10 +22,33 @@ import type {
  */
 export class AgyProcess implements AgyTransport {
   private agyPath: string;
+  private resolvedBinary: string | null = null;
   private ptyProc: { kill(): void } | null = null;
 
   constructor(agyPath = 'agy') {
     this.agyPath = agyPath;
+  }
+
+  /**
+   * Resolve agyPath to an absolute executable path. node-pty (conpty) on
+   * Windows does not search PATH or apply PATHEXT, so spawning a bare 'agy'
+   * fails with "File not found" even when the shell finds it fine.
+   */
+  private async resolveBinary(): Promise<string> {
+    if (this.resolvedBinary) return this.resolvedBinary;
+    if (path.isAbsolute(this.agyPath)) {
+      this.resolvedBinary = this.agyPath;
+      return this.resolvedBinary;
+    }
+    const finder = process.platform === 'win32' ? 'where' : 'which';
+    const out = await this.runCapture([finder, this.agyPath]).catch(() => '');
+    const lines = out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const exe = lines.find((l) => /\.exe$/i.test(l)) ?? lines[0];
+    this.resolvedBinary = exe || this.agyPath;
+    return this.resolvedBinary;
   }
 
   async checkAvailability(probe: boolean): Promise<AgyAvailability> {
@@ -41,7 +64,7 @@ export class AgyProcess implements AgyTransport {
     }
     const avail: AgyAvailability = {
       found: true,
-      resolvedPath: this.agyPath,
+      resolvedPath: await this.resolveBinary(),
       version: version.trim(),
     };
     if (probe) {
@@ -89,9 +112,18 @@ export class AgyProcess implements AgyTransport {
     for (const dir of options.includeDirectories ?? [])
       args.push('--add-dir', dir);
 
+    // conpty needs an absolute path, and can only CreateProcess real
+    // executables — route .cmd/.bat shims through cmd.exe.
+    let bin = await this.resolveBinary();
+    let spawnArgs = args;
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
+      spawnArgs = ['/c', bin, ...args];
+      bin = process.env.ComSpec ?? 'cmd.exe';
+    }
+
     return await new Promise<AgyResult>((resolve, reject) => {
       let raw = '';
-      const proc = pty.spawn(this.agyPath, args, {
+      const proc = pty.spawn(bin, spawnArgs, {
         name: 'xterm-256color',
         cols: 120,
         rows: 40,
