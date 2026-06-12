@@ -2,7 +2,7 @@
   "name": "calmui-for-antigravity-cli",
   "displayName": "CalmUI for Antigravity CLI",
   "description": "A calm, lightweight quick-ask companion for Antigravity CLI (agy). Unofficial — not affiliated with Google.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "veles",
   "license": "MIT",
   "repository": {
