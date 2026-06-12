@@ -1,58 +1,70 @@
 # CalmUI for Antigravity CLI
 
-A calm, intentionally-light VS Code / Antigravity IDE companion for **Antigravity CLI** (`agy`) — the
-terminal-first agent platform that replaces Gemini CLI as of June 2026.
+A calm, lightweight quick-ask side panel for the Antigravity CLI (`agy`) inside VS Code–compatible editors.
 
-This repo holds the **planning, research, and spec** for the project. The shipped extension lives in a
-separate public product repo (`calmui-for-antigravity-cli`); this folder is the design/dev brain.
+![CalmUI panel](docs/screenshot.png)
+<!-- TODO: replace with real screenshot before marketplace listing -->
 
-> **Unofficial.** Not affiliated with, endorsed by, or sponsored by Google. "Antigravity" is a Google
-> product name; this extension is a third-party companion, named descriptively under nominative fair use
-> (the same way the existing *Calm UI for Gemini CLI* is named).
+> **Unofficial.** Not affiliated with, endorsed by, or sponsored by Google. "Antigravity" is a Google product name; this is a third-party companion named descriptively under nominative fair use.
 
-## The goal
+## Features
 
-Build a **fast, high-clarity quick-ask side panel** for Antigravity CLI that:
+- **Quick-ask panel** in the activity bar — press **Ctrl+Shift+A** (Cmd+Shift+A on Mac) to focus
+- **Streamed responses** from `agy -p` over a real pseudo-terminal — agy only emits output to a TTY
+- **Multi-turn conversations** — threads use `--conversation <id>` automatically; click "New conversation" to reset
+- **Markdown rendering** of agy responses
+- **Cancel in-flight prompts** without restarting
+- **Guided onboarding** when agy is missing, plus `CalmUI: Run Diagnostics` command (binary detection, version, resolved path, auth probe)
+- **One-click "Open in Terminal" handoff** — prefills your prompt into a full interactive agy session (never auto-runs)
 
-- works inside Antigravity IDE / VS Code-compatible editors
-- stays intentionally light and reliable for quick interactions
-- does **not** overbuild around transport features that Antigravity CLI does not yet expose
-- escalates heavy, approval-heavy, or long-running work to the native terminal workflow
+## Requirements
 
-It is a polished **quick-chat companion**, not a full orchestration shell. The terminal stays the source
-of truth for advanced agent work; the panel is the fast read/ask surface beside it.
+- **Antigravity CLI (`agy`)** installed and signed in (see [antigravity.google](https://antigravity.google))
+- **VS Code ≥ 1.93** or any compatible editor (e.g., Antigravity IDE)
+- Windows, macOS, or Linux
 
-## Why now
+## Install
 
-- **Gemini CLI is being retired** (AI Pro/Ultra requests stopped June 18 2026). Antigravity CLI is the
-  successor — Go-based, multi-agent, plugin/skill/hook/MCP/SDK ecosystem.
-- Our existing *Calm UI for Gemini CLI* extension is **ACP-driven**, and **Antigravity CLI does not
-  currently expose an ACP / JSON-RPC stdio server** (the request is open, no maintainer commitment). So
-  v1 cannot be a straight port — it needs a new, thinner transport.
+No marketplace listing yet — install via VSIX sideload:
 
-## What's in this folder
+1. Download the `.vsix` file from [GitHub Releases](https://github.com/samshennan/calmui-for-antigravity-cli/releases).
+2. **In VS Code:** Open the Extensions view, click the ⋯ menu, select "Install from VSIX…", and choose the file.
+   - **Command line:** `code --install-extension calmui-for-antigravity-cli-0.1.0.vsix`
+   - **Antigravity IDE:** Use the Extensions UI (CLI command may differ).
+3. Reload the editor. Click the CalmUI icon in the activity bar to open the panel.
 
-Start here if you're an agent: **[AGENTS.md](AGENTS.md)**.
+## Settings
 
-| File | Purpose |
-|------|---------|
-| [AGENTS.md](AGENTS.md) | Session entry point for agents — what to read, the one rule that matters |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Module map, transport contract, the node-pty risk + fallbacks |
-| [BUILD-PLAN.md](BUILD-PLAN.md) | Phased tasks with acceptance criteria — **start at Phase 0.5 gate** |
-| [2026-06-11-spike-results.md](2026-06-11-spike-results.md) | **Tested** findings — the transport decision lives here |
-| [2026-06-11-antigravity-cli-research.md](2026-06-11-antigravity-cli-research.md) | Public capability surface of `agy`, what to work around |
-| [2026-06-11-mvp-spec.md](2026-06-11-mvp-spec.md) | MVP scope, phases, exit criteria |
-| [2026-06-11-logo-icon-notes.md](2026-06-11-logo-icon-notes.md) | Logo/icon direction and trademark-safety guidance |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `calmui-agy.agyPath` | `agy` | Absolute path to the agy CLI binary. Leave as `agy` to resolve from `PATH`. Windows default: `%LOCALAPPDATA%\agy\bin\agy.exe` |
+| `calmui-agy.model` | *(empty)* | Model override passed as `--model` on each prompt. Leave empty to use agy's default. |
+| `calmui-agy.includeDirectories` | `[]` | Extra folders outside the workspace that agy can read. Passed as `--add-dir` on every prompt. Use absolute paths. |
+| `calmui-agy.printTimeoutSeconds` | `120` | Timeout for a single quick-ask prompt, passed as `--print-timeout`. The agy default is 5 minutes. |
 
-Scaffold: `package.json`, `esbuild.mjs`, `tsconfig*.json`, `vitest.config.ts`, and `src/`
-(transport interface + ANSI utils with tests + panel bridge + stubs). `media/icon.svg`
-(themeable activity-bar) and `media/icon-color.svg` (brand, recoloured from black to calm teal).
+## Philosophy
 
-## Status (2026-06-11)
+CalmUI is a **quick-ask companion**, not a full orchestration shell. The panel is optimized for fast, focused interactions:
 
-- **Decision locked:** transport = node-pty wrapping `agy -p`, ANSI-stripped. SDK rejected
-  (needs consumer API key, won't reuse gcp/Vertex). `agy` owns auth.
-- **Scaffold committed.** Next session: **Phase 0.5** — prove node-pty in the extension host
-  (go/no-go gate) before building UI. See [BUILD-PLAN.md](BUILD-PLAN.md).
-- **Repo:** private locally; flip GitHub repo public when ready (Phase 4).
-- **Deadline context:** Gemini-era access ended June 18 2026; consumer migration is live now.
+- Use the panel for **quick questions and small tasks**.
+- For **long-running work, approvals, or complex orchestration**, the panel recommends a handoff to the terminal — that's where agy's full power lives.
+- The terminal stays the source of truth for advanced agent workflows.
+
+## Development
+
+Clone the repo and install dependencies:
+
+```bash
+npm install
+npm run build
+npm test
+npm run package  # Produces the .vsix file
+```
+
+Design and planning docs live in the repo:
+- `ARCHITECTURE.md` — module map and transport contract
+- `BUILD-PLAN.md` — phased rollout and acceptance criteria
+
+## License
+
+MIT
