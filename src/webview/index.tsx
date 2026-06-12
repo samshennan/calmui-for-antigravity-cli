@@ -1,9 +1,26 @@
 import { createRoot } from 'react-dom/client';
 import { useEffect, useState } from 'react';
+import { marked } from 'marked';
 import type { ChatMessage, HostToWebview, PanelStatus } from '../shared/messages';
 
 declare const acquireVsCodeApi: () => { postMessage: (m: unknown) => void };
 const vscodeApi = acquireVsCodeApi();
+
+// ─── marked configuration ────────────────────────────────────────────────────
+
+marked.setOptions({ breaks: true, gfm: true });
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderMarkdown(text: string): string {
+  return marked.parse(escapeHtml(text), { breaks: true, gfm: true }) as string;
+}
 
 // ─── shared style tokens ────────────────────────────────────────────────────
 
@@ -76,6 +93,54 @@ const S = {
   },
 };
 
+// ─── markdown styles injected once ──────────────────────────────────────────
+
+const MARKDOWN_CSS = `
+.calm-md p { margin: 0 0 6px 0; }
+.calm-md p:last-child { margin-bottom: 0; }
+.calm-md ul, .calm-md ol { margin: 0 0 6px 0; padding-left: 18px; }
+.calm-md li { margin-bottom: 2px; line-height: 1.5; }
+.calm-md code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-input-background));
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.calm-md pre {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-input-background));
+  padding: 8px 10px;
+  border-radius: 3px;
+  overflow-x: auto;
+  margin: 0 0 6px 0;
+  font-size: 12px;
+}
+.calm-md pre code {
+  padding: 0;
+  background: transparent;
+}
+.calm-md a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+.calm-md a:hover { text-decoration: underline; }
+.calm-md blockquote {
+  margin: 0 0 6px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--vscode-input-border);
+  color: var(--vscode-descriptionForeground);
+}
+.calm-md h1, .calm-md h2, .calm-md h3, .calm-md h4 {
+  margin: 6px 0 4px 0;
+  font-weight: 600;
+}
+`;
+
+function MarkdownStyles() {
+  return <style>{MARKDOWN_CSS}</style>;
+}
+
 // ─── sub-components ─────────────────────────────────────────────────────────
 
 function HeroTitle() {
@@ -135,63 +200,67 @@ function SetupStrip() {
   const steps = ['Install agy', 'Sign in', 'Ask anything'];
   return (
     <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
-      {steps.map((label, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              padding: '4px 8px',
-              borderRadius: 3,
-              background:
-                i === 0
-                  ? 'var(--vscode-button-background)'
-                  : 'var(--vscode-input-background)',
-              color:
-                i === 0
-                  ? 'var(--vscode-button-foreground)'
-                  : 'var(--vscode-descriptionForeground)',
-              fontSize: 11,
-              fontWeight: i === 0 ? 600 : 400,
-              border: '1px solid var(--vscode-input-border)',
-            }}
-          >
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 16,
-                height: 16,
-                borderRadius: '50%',
-                background:
-                  i === 0
-                    ? 'var(--vscode-button-foreground)'
-                    : 'var(--vscode-input-border)',
-                color:
-                  i === 0
-                    ? 'var(--vscode-button-background)'
-                    : 'var(--vscode-descriptionForeground)',
-                fontSize: 10,
-                fontWeight: 700,
-              }}
-            >
-              {i + 1}
-            </span>
-            {label}
-          </div>
-          {i < steps.length - 1 && (
+      {steps.map((label, i) => {
+        const isActive = i === 2;
+        const isDone = i < 2;
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
             <div
               style={{
-                width: 16,
-                height: 1,
-                background: 'var(--vscode-input-border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 8px',
+                borderRadius: 3,
+                background: isActive
+                  ? 'var(--vscode-button-background)'
+                  : 'var(--vscode-input-background)',
+                color: isActive
+                  ? 'var(--vscode-button-foreground)'
+                  : 'var(--vscode-descriptionForeground)',
+                fontSize: 11,
+                fontWeight: isActive ? 600 : 400,
+                border: '1px solid var(--vscode-input-border)',
               }}
-            />
-          )}
-        </div>
-      ))}
+            >
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 16,
+                  height: 16,
+                  borderRadius: '50%',
+                  background: isActive
+                    ? 'var(--vscode-button-foreground)'
+                    : isDone
+                    ? 'var(--vscode-button-background)'
+                    : 'var(--vscode-input-border)',
+                  color: isActive
+                    ? 'var(--vscode-button-background)'
+                    : isDone
+                    ? 'var(--vscode-button-foreground)'
+                    : 'var(--vscode-descriptionForeground)',
+                  fontSize: 10,
+                  fontWeight: 700,
+                }}
+              >
+                {isDone ? '✓' : i + 1}
+              </span>
+              {label}
+            </div>
+            {i < steps.length - 1 && (
+              <div
+                style={{
+                  width: 16,
+                  height: 1,
+                  background: 'var(--vscode-input-border)',
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -265,66 +334,95 @@ function OnboardingPanel({
   );
 }
 
-function TranscriptView({ messages }: { messages: ChatMessage[] }) {
+function TranscriptView({
+  messages,
+  errorIds,
+}: {
+  messages: ChatMessage[];
+  errorIds: Set<string>;
+}) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {messages.map((m) => (
-        <div
-          key={m.id}
-          style={{
-            background:
-              m.role === 'user'
-                ? 'var(--vscode-input-background)'
-                : 'transparent',
-            border:
-              m.role === 'user'
-                ? '1px solid var(--vscode-input-border)'
-                : 'none',
-            borderRadius: 3,
-            padding: m.role === 'user' ? '6px 8px' : '2px 0',
-          }}
-        >
+      {messages.map((m) => {
+        const isError = errorIds.has(m.id);
+        return (
           <div
+            key={m.id}
             style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: 'var(--vscode-descriptionForeground)',
-              marginBottom: 3,
+              background:
+                m.role === 'user'
+                  ? 'var(--vscode-input-background)'
+                  : 'transparent',
+              border:
+                m.role === 'user'
+                  ? '1px solid var(--vscode-input-border)'
+                  : 'none',
+              borderRadius: 3,
+              padding: m.role === 'user' ? '6px 8px' : '2px 0',
             }}
           >
-            {m.role === 'user' ? 'You' : 'agy'}
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--vscode-descriptionForeground)',
+                marginBottom: 3,
+              }}
+            >
+              {m.role === 'user' ? 'You' : 'agy'}
+            </div>
+            {m.role === 'user' || isError ? (
+              <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                {m.text}
+              </div>
+            ) : m.pending && !m.text ? (
+              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                <span style={{ opacity: 0.5 }}>thinking…</span>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                <div
+                  className='calm-md'
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
+                />
+                {m.pending && <span style={{ opacity: 0.5 }}>▋</span>}
+              </div>
+            )}
           </div>
-          <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-            {m.text}
-            {m.pending && !m.text ? (
-              <span style={{ opacity: 0.5 }}>thinking…</span>
-            ) : m.pending ? (
-              <span style={{ opacity: 0.5 }}> ▋</span>
-            ) : null}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 function ReadyPanel({
   messages,
+  errorIds,
   input,
   setInput,
   onSend,
+  onNewConversation,
 }: {
   messages: ChatMessage[];
+  errorIds: Set<string>;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
+  onNewConversation: () => void;
 }) {
   return (
     <>
       {messages.length === 0 ? (
         <p style={{ ...S.muted, margin: 0 }}>Send a prompt to get started.</p>
       ) : (
-        <TranscriptView messages={messages} />
+        <>
+          <TranscriptView messages={messages} errorIds={errorIds} />
+          <div style={S.row}>
+            <button style={S.btn(false)} onClick={onNewConversation}>
+              New conversation
+            </button>
+          </div>
+        </>
       )}
       <PromptBox input={input} setInput={setInput} onSend={onSend} />
     </>
@@ -333,14 +431,14 @@ function ReadyPanel({
 
 function RunningPanel({
   messages,
-  input,
+  errorIds,
 }: {
   messages: ChatMessage[];
-  input: string;
+  errorIds: Set<string>;
 }) {
   return (
     <>
-      <TranscriptView messages={messages} />
+      <TranscriptView messages={messages} errorIds={errorIds} />
       <div style={S.row}>
         <span style={S.muted}>Running…</span>
         <button
@@ -356,18 +454,20 @@ function RunningPanel({
 
 function ErrorPanel({
   messages,
+  errorIds,
   input,
   setInput,
   onSend,
 }: {
   messages: ChatMessage[];
+  errorIds: Set<string>;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
 }) {
   return (
     <>
-      {messages.length > 0 && <TranscriptView messages={messages} />}
+      {messages.length > 0 && <TranscriptView messages={messages} errorIds={errorIds} />}
       <div style={S.card}>
         <div style={{ fontSize: 12, color: 'var(--vscode-errorForeground, #f48771)' }}>
           Something went wrong. You can retry here or continue in the full Antigravity terminal.
@@ -389,18 +489,22 @@ function ErrorPanel({
 
 function HandoffPanel({
   messages,
+  errorIds,
   input,
   setInput,
   onSend,
+  onNewConversation,
 }: {
   messages: ChatMessage[];
+  errorIds: Set<string>;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
+  onNewConversation: () => void;
 }) {
   return (
     <>
-      {messages.length > 0 && <TranscriptView messages={messages} />}
+      {messages.length > 0 && <TranscriptView messages={messages} errorIds={errorIds} />}
       <div style={S.card}>
         <div style={{ fontSize: 12 }}>
           <strong>This looks like a longer task.</strong> For best results, continue in the
@@ -408,10 +512,7 @@ function HandoffPanel({
         </div>
         <div style={S.row}>
           <OpenTerminalBtn input={input} />
-          <button
-            style={S.btn(false)}
-            onClick={() => vscodeApi.postMessage({ type: 'newConversation' })}
-          >
+          <button style={S.btn(false)} onClick={onNewConversation}>
             New conversation
           </button>
         </div>
@@ -435,6 +536,7 @@ function CheckingPanel() {
 function App() {
   const [status, setStatus] = useState<PanelStatus>('checking');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [errorIds, setErrorIds] = useState<Set<string>>(new Set());
   const [input, setInput] = useState('');
 
   useEffect(() => {
@@ -453,10 +555,34 @@ function App() {
           prev.map((x) => (x.id === m.id ? { ...x, pending: false } : x)),
         );
       } else if (m.type === 'error') {
-        setMessages((prev) => [
-          ...prev,
-          { id: `e${Date.now()}`, role: 'assistant' as const, text: `⚠ ${m.text}` },
-        ]);
+        if (m.id) {
+          setMessages((prev) => {
+            const exists = prev.some((x) => x.id === m.id);
+            if (exists) {
+              return prev.map((x) => {
+                if (x.id !== m.id) return x;
+                const warningText = x.text
+                  ? `${x.text}\n⚠ ${m.text}`
+                  : `⚠ ${m.text}`;
+                return { ...x, pending: false, text: warningText };
+              });
+            }
+            const newId = `e${Date.now()}`;
+            setErrorIds((ids) => new Set(ids).add(newId));
+            return [
+              ...prev,
+              { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
+            ];
+          });
+          setErrorIds((ids) => new Set(ids).add(m.id!));
+        } else {
+          const newId = `e${Date.now()}`;
+          setErrorIds((ids) => new Set(ids).add(newId));
+          setMessages((prev) => [
+            ...prev,
+            { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
+          ]);
+        }
       }
     };
     window.addEventListener('message', onMsg);
@@ -472,6 +598,12 @@ function App() {
     ]);
     vscodeApi.postMessage({ type: 'send', text });
     setInput('');
+  };
+
+  const newConversation = () => {
+    setMessages([]);
+    setErrorIds(new Set());
+    vscodeApi.postMessage({ type: 'newConversation' });
   };
 
   let panel: React.ReactNode;
@@ -491,19 +623,22 @@ function App() {
       panel = (
         <ReadyPanel
           messages={messages}
+          errorIds={errorIds}
           input={input}
           setInput={setInput}
           onSend={send}
+          onNewConversation={newConversation}
         />
       );
       break;
     case 'running':
-      panel = <RunningPanel messages={messages} input={input} />;
+      panel = <RunningPanel messages={messages} errorIds={errorIds} />;
       break;
     case 'error':
       panel = (
         <ErrorPanel
           messages={messages}
+          errorIds={errorIds}
           input={input}
           setInput={setInput}
           onSend={send}
@@ -514,9 +649,11 @@ function App() {
       panel = (
         <HandoffPanel
           messages={messages}
+          errorIds={errorIds}
           input={input}
           setInput={setInput}
           onSend={send}
+          onNewConversation={newConversation}
         />
       );
       break;
@@ -524,7 +661,12 @@ function App() {
       panel = <CheckingPanel />;
   }
 
-  return <main style={S.root}>{panel}</main>;
+  return (
+    <main style={S.root}>
+      <MarkdownStyles />
+      {panel}
+    </main>
+  );
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
