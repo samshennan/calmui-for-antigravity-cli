@@ -1,12 +1,11 @@
 import { createRoot } from 'react-dom/client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
+import type { CSSProperties, ReactNode } from 'react';
 import type { ChatMessage, ConversationMeta, HostToWebview, ModelChoice, PanelStatus } from '../shared/messages';
 
 declare const acquireVsCodeApi: () => { postMessage: (m: unknown) => void };
 const vscodeApi = acquireVsCodeApi();
-
-// ─── marked configuration ────────────────────────────────────────────────────
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -22,106 +21,351 @@ function renderMarkdown(text: string): string {
   return marked.parse(escapeHtml(text), { breaks: true, gfm: true }) as string;
 }
 
-// ─── shared style tokens ────────────────────────────────────────────────────
-
-const S = {
-  root: {
-    fontFamily: 'var(--vscode-font-family)',
-    fontSize: 13,
-    color: 'var(--vscode-foreground)',
-    padding: '0',
-    display: 'flex' as const,
-    flexDirection: 'column' as const,
-    minHeight: '100vh',
-    boxSizing: 'border-box' as const,
-  },
-  scrollArea: {
-    padding: '12px 14px',
-    display: 'flex' as const,
-    flexDirection: 'column' as const,
-    gap: 12,
-    flex: 1,
-    overflowY: 'auto' as const,
-  },
-  muted: {
-    color: 'var(--vscode-descriptionForeground)',
-    fontSize: 12,
-  },
-  hero: {
-    fontSize: 18,
-    fontWeight: 600,
-    letterSpacing: '-0.3px',
-    margin: 0,
-  },
-  btn: (primary = true) => ({
-    background: primary
-      ? 'var(--vscode-button-background)'
-      : 'var(--vscode-button-secondaryBackground, var(--vscode-input-background))',
-    color: primary
-      ? 'var(--vscode-button-foreground)'
-      : 'var(--vscode-button-secondaryForeground, var(--vscode-foreground))',
-    border: primary ? 'none' : '1px solid var(--vscode-input-border)',
-    borderRadius: 3,
-    padding: '5px 10px',
-    fontSize: 12,
-    cursor: 'pointer',
-    lineHeight: 1.5,
-  }),
-  card: {
-    background: 'var(--vscode-editor-inactiveSelectionBackground, var(--vscode-input-background))',
-    border: '1px solid var(--vscode-input-border)',
-    borderRadius: 4,
-    padding: '10px 12px',
-    display: 'flex' as const,
-    flexDirection: 'column' as const,
-    gap: 8,
-  },
-  textarea: {
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    background: 'var(--vscode-input-background)',
-    color: 'var(--vscode-input-foreground)',
-    border: '1px solid var(--vscode-input-border)',
-    borderRadius: 3,
-    padding: '6px 8px',
-    fontSize: 13,
-    fontFamily: 'var(--vscode-font-family)',
-    resize: 'vertical' as const,
-    outline: 'none',
-  },
-  row: {
-    display: 'flex' as const,
-    gap: 6,
-    flexWrap: 'wrap' as const,
-  },
-  divider: {
-    borderTop: '1px solid var(--vscode-input-border)',
-    margin: '4px 0',
-  },
-};
-
-// ─── markdown styles injected once ──────────────────────────────────────────
-
-const MARKDOWN_CSS = `
-.calm-md p { margin: 0 0 6px 0; }
+const css = `
+:root {
+  --calm-bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --calm-fg: var(--vscode-foreground);
+  --calm-muted: var(--vscode-descriptionForeground);
+  --calm-border: var(--vscode-panel-border, var(--vscode-input-border));
+  --calm-input: var(--vscode-input-background);
+  --calm-hover: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+  --calm-accent: var(--vscode-button-background);
+  --calm-accent-fg: var(--vscode-button-foreground);
+}
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; min-height: 100%; margin: 0; padding: 0; }
+body {
+  background: var(--calm-bg);
+  color: var(--calm-fg);
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+}
+button, textarea, select {
+  font-family: var(--vscode-font-family);
+  letter-spacing: 0;
+}
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--calm-bg);
+}
+.topbar {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--calm-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.brand {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--calm-fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+.brand-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--vscode-charts-green, #73c991);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-green, #73c991) 16%, transparent);
+}
+.brand-status.running {
+  background: var(--vscode-progressBar-background, var(--calm-accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-progressBar-background, var(--calm-accent)) 16%, transparent);
+}
+.brand-status.error {
+  background: var(--vscode-errorForeground, #f48771);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-errorForeground, #f48771) 16%, transparent);
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--calm-muted);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  color: var(--calm-fg);
+  background: var(--calm-hover);
+}
+.icon-btn.primary {
+  color: var(--calm-accent-fg);
+  background: var(--calm-accent);
+}
+.icon-btn.primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px 18px;
+  display: flex;
+  flex-direction: column;
+}
+.content.empty {
+  justify-content: center;
+}
+.empty-state {
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 20px 8px;
+}
+.empty-logo {
+  width: 78px;
+  height: 56px;
+  opacity: 0.96;
+}
+.empty-title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.empty-subtitle {
+  margin: -2px 0 8px;
+  max-width: 320px;
+  color: var(--calm-muted);
+  line-height: 1.45;
+}
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 390px;
+}
+.suggestion {
+  border: 1px solid var(--calm-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--calm-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.suggestion:hover {
+  color: var(--calm-fg);
+  background: var(--calm-hover);
+}
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.message.user {
+  align-items: flex-end;
+}
+.message-label {
+  color: var(--calm-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.bubble {
+  max-width: min(100%, 520px);
+  line-height: 1.52;
+  overflow-wrap: anywhere;
+}
+.user .bubble {
+  max-width: 86%;
+  padding: 7px 10px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--vscode-input-background);
+  border: 1px solid color-mix(in srgb, var(--calm-border) 78%, transparent);
+  white-space: pre-wrap;
+}
+.assistant .bubble {
+  width: 100%;
+  padding: 0;
+}
+.thinking {
+  color: var(--calm-muted);
+}
+.status-card {
+  border: 1px solid var(--calm-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--calm-input) 74%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  line-height: 1.5;
+}
+.status-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.text-btn {
+  border: 1px solid var(--calm-border);
+  border-radius: 6px;
+  background: var(--vscode-button-secondaryBackground, var(--calm-input));
+  color: var(--vscode-button-secondaryForeground, var(--calm-fg));
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.text-btn.primary {
+  border-color: transparent;
+  background: var(--calm-accent);
+  color: var(--calm-accent-fg);
+}
+.text-btn:hover {
+  filter: brightness(1.08);
+}
+.history-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.history-item {
+  width: 100%;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--calm-fg);
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.history-item:hover {
+  background: var(--calm-hover);
+}
+.history-item.active {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground, var(--calm-fg));
+}
+.history-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+.history-time {
+  color: var(--calm-muted);
+  font-size: 11px;
+}
+.composer-shell {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--calm-border);
+  padding: 10px 10px 8px;
+  background: var(--calm-bg);
+}
+.composer {
+  border: 1px solid color-mix(in srgb, var(--calm-border) 86%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--calm-input) 92%, transparent);
+  overflow: hidden;
+}
+.prompt {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  max-height: 180px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.prompt::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+.composer-rail {
+  min-height: 38px;
+  padding: 6px 7px 7px;
+  border-top: 1px solid color-mix(in srgb, var(--calm-border) 70%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.model-select {
+  min-width: 0;
+  max-width: 164px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--calm-muted);
+  font-size: 11px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.model-select:hover {
+  color: var(--calm-fg);
+  background: var(--calm-hover);
+}
+.usage {
+  color: var(--calm-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.spacer {
+  flex: 1 1 auto;
+  min-width: 4px;
+}
+.calm-md p { margin: 0 0 8px; }
 .calm-md p:last-child { margin-bottom: 0; }
-.calm-md ul, .calm-md ol { margin: 0 0 6px 0; padding-left: 18px; }
-.calm-md li { margin-bottom: 2px; line-height: 1.5; }
+.calm-md ul, .calm-md ol { margin: 0 0 8px; padding-left: 18px; }
+.calm-md li { margin-bottom: 3px; line-height: 1.5; }
 .calm-md code {
   font-family: var(--vscode-editor-font-family, monospace);
   background: var(--vscode-textCodeBlock-background, var(--vscode-input-background));
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 12px;
 }
 .calm-md pre {
   font-family: var(--vscode-editor-font-family, monospace);
   background: var(--vscode-textCodeBlock-background, var(--vscode-input-background));
-  padding: 8px 10px;
-  border-radius: 3px;
+  padding: 9px 10px;
+  border-radius: 7px;
   overflow-x: auto;
-  margin: 0 0 6px 0;
+  margin: 0 0 8px;
   font-size: 12px;
+  border: 1px solid var(--calm-border);
 }
 .calm-md pre code {
   padding: 0;
@@ -133,122 +377,160 @@ const MARKDOWN_CSS = `
 }
 .calm-md a:hover { text-decoration: underline; }
 .calm-md blockquote {
-  margin: 0 0 6px 0;
+  margin: 0 0 8px;
   padding: 2px 0 2px 10px;
-  border-left: 3px solid var(--vscode-input-border);
-  color: var(--vscode-descriptionForeground);
+  border-left: 3px solid var(--calm-border);
+  color: var(--calm-muted);
 }
 .calm-md h1, .calm-md h2, .calm-md h3, .calm-md h4 {
-  margin: 6px 0 4px 0;
+  margin: 8px 0 5px;
   font-weight: 600;
+  line-height: 1.25;
+}
+@media (max-width: 330px) {
+  .usage { display: none; }
+  .model-select { max-width: 128px; }
+  .empty-title { font-size: 16px; }
 }
 `;
 
-function MarkdownStyles() {
-  return <style>{MARKDOWN_CSS}</style>;
+function Styles() {
+  return <style>{css}</style>;
 }
 
-// ─── icon button ─────────────────────────────────────────────────────────────
-
-function IconBtn({
+function IconButton({
   title,
   onClick,
   children,
+  primary = false,
+  disabled = false,
 }: {
   title: string;
   onClick: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
+  primary?: boolean;
+  disabled?: boolean;
 }) {
-  const [hovered, setHovered] = useState(false);
   return (
     <button
       type='button'
       title={title}
+      aria-label={title}
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: 'transparent',
-        border: 'none',
-        padding: 4,
-        cursor: 'pointer',
-        color: 'var(--vscode-foreground)',
-        opacity: hovered ? 1 : 0.7,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        lineHeight: 0,
-      }}
+      disabled={disabled}
+      className={`icon-btn${primary ? ' primary' : ''}`}
     >
       {children}
     </button>
   );
 }
 
-// ─── icon SVGs ───────────────────────────────────────────────────────────────
-
 function ClockIcon() {
   return (
-    <svg width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' strokeLinejoin='round'>
-      <circle cx='8' cy='8' r='6.5' />
-      <polyline points='8,4.5 8,8 10.5,10' />
+    <svg width='17' height='17' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.45' strokeLinecap='round' strokeLinejoin='round'>
+      <circle cx='8' cy='8' r='6.3' />
+      <path d='M8 4.6v3.8l2.5 1.6' />
     </svg>
   );
 }
 
 function NewChatIcon() {
   return (
-    <svg width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' strokeLinejoin='round'>
-      <rect x='2' y='2' width='12' height='12' rx='2' />
-      <line x1='8' y1='5.5' x2='8' y2='10.5' />
-      <line x1='5.5' y1='8' x2='10.5' y2='8' />
+    <svg width='17' height='17' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.45' strokeLinecap='round' strokeLinejoin='round'>
+      <path d='M3.1 2.6h9.8a1.1 1.1 0 0 1 1.1 1.1v8.6a1.1 1.1 0 0 1-1.1 1.1H3.1A1.1 1.1 0 0 1 2 12.3V3.7a1.1 1.1 0 0 1 1.1-1.1Z' />
+      <path d='M8 5.2v5.6M5.2 8h5.6' />
     </svg>
   );
 }
 
 function GearIcon() {
+  // Codicon-style cog: toothed outer ring + center hole (spokes-only reads as a sun).
   return (
-    <svg width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' strokeLinejoin='round'>
-      <circle cx='8' cy='8' r='2.5' />
-      <path d='M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M12.6 3.4l-.85.85M4.25 11.75l-.85.85' />
+    <svg width='16' height='16' viewBox='0 0 16 16' fill='currentColor'>
+      <path
+        fillRule='evenodd'
+        d='M9.1 1.5 9.4 3a5.2 5.2 0 0 1 1.5.87l1.46-.5.95 1.64-1.16 1.06a5.27 5.27 0 0 1 0 1.74l1.16 1.06-.95 1.64-1.46-.5a5.2 5.2 0 0 1-1.5.87l-.3 1.52H7.2L6.9 12.9a5.2 5.2 0 0 1-1.5-.87l-1.46.5L3 10.9l1.16-1.06a5.27 5.27 0 0 1 0-1.74L3 7.04l.95-1.64 1.46.5A5.2 5.2 0 0 1 6.9 5l.3-1.51h1.9ZM8 10.3a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z'
+        transform='translate(-0.1 0.05)'
+      />
     </svg>
   );
 }
 
-// ─── top bar ─────────────────────────────────────────────────────────────────
+function SendIcon() {
+  return (
+    <svg width='18' height='18' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.6' strokeLinecap='round' strokeLinejoin='round'>
+      <path d='M8 12.5V3.5' />
+      <path d='M4.5 7 8 3.5 11.5 7' />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg width='17' height='17' viewBox='0 0 16 16' fill='currentColor'>
+      <rect x='4.2' y='4.2' width='7.6' height='7.6' rx='1.2' />
+    </svg>
+  );
+}
+
+function TerminalIcon() {
+  return (
+    <svg width='17' height='17' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.45' strokeLinecap='round' strokeLinejoin='round'>
+      <path d='M2.3 3.2h11.4v9.6H2.3z' />
+      <path d='m4.3 6 2 2-2 2M7.8 10h3.5' />
+    </svg>
+  );
+}
+
+function CalmLogo() {
+  return (
+    <svg className='empty-logo' viewBox='0 0 579 401' role='img' aria-label='CalmUI logo'>
+      <g transform='translate(-141.37 -207.56)'>
+        <g transform='matrix(2.002768 0 0 .206369 -434.48 506.07)'>
+          <path d='M431.974 207.564c79.72 0 144.443 64.723 144.443 144.443S511.694 496.45 431.974 496.45 287.531 431.727 287.531 352.007s64.722-144.443 144.443-144.443Zm0 43.697c55.603 0 100.746 45.143 100.746 100.746s-45.143 100.746-100.746 100.746-100.746-45.143-100.746-100.746 45.143-100.746 100.746-100.746Z' fill='#1f6b66' />
+        </g>
+        <circle cx='431.974' cy='352.007' r='144.443' fill='#2e8b85' />
+        <g transform='matrix(.7939 0 0 .112824 91.94 534.94)'>
+          <circle cx='431.974' cy='352.007' r='144.443' fill='#2e8b85' fillOpacity='.22' />
+        </g>
+        <circle cx='496.858' cy='297.27' r='42.509' fill='white' />
+      </g>
+    </svg>
+  );
+}
+
+function statusClass(status: PanelStatus): string {
+  if (status === 'running') return 'running';
+  if (status === 'error' || status === 'handoff-recommended' || status === 'missing-cli') return 'error';
+  return '';
+}
 
 function TopBar({
+  status,
   onHistory,
   onNewChat,
 }: {
+  status: PanelStatus;
   onHistory: () => void;
   onNewChat: () => void;
 }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '6px 10px 6px 14px',
-        borderBottom: '1px solid var(--vscode-input-border)',
-        flexShrink: 0,
-      }}
-    >
-      <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: '-0.2px' }}>CalmUI</span>
-      <div style={{ display: 'flex', gap: 2 }}>
-        <IconBtn title='History' onClick={onHistory}>
-          <ClockIcon />
-        </IconBtn>
-        <IconBtn title='New conversation' onClick={onNewChat}>
-          <NewChatIcon />
-        </IconBtn>
+    <header className='topbar'>
+      <div className='brand'>
+        <span className={`brand-status ${statusClass(status)}`} />
+        <span>CalmUI</span>
       </div>
-    </div>
+      <div className='toolbar'>
+        <IconButton title='Conversation history' onClick={onHistory}>
+          <ClockIcon />
+        </IconButton>
+        <IconButton title='New chat' onClick={onNewChat}>
+          <NewChatIcon />
+        </IconButton>
+      </div>
+    </header>
   );
 }
-
-// ─── bottom bar ──────────────────────────────────────────────────────────────
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -256,82 +538,92 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-function BottomBar({
+function Composer({
+  input,
+  setInput,
+  onSend,
+  running,
   modelItems,
   modelCurrent,
   usage,
 }: {
+  input: string;
+  setInput: (v: string) => void;
+  onSend: () => void;
+  running: boolean;
   modelItems: ModelChoice[];
   modelCurrent: string;
   usage: { usedTokens: number; maxTokens: number } | null;
 }) {
   const [localModel, setLocalModel] = useState(modelCurrent);
 
-  // Sync when host pushes a new current value
   useEffect(() => {
     setLocalModel(modelCurrent);
   }, [modelCurrent]);
 
   const hasCurrentInItems = modelItems.some((m) => m.value === localModel);
-
-  const handleChange = (value: string) => {
+  const handleModel = (value: string) => {
     setLocalModel(value);
     vscodeApi.postMessage({ type: 'setModel', model: value });
   };
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '4px 10px 4px 14px',
-        borderTop: '1px solid var(--vscode-input-border)',
-        fontSize: 11,
-        color: 'var(--vscode-descriptionForeground)',
-        flexShrink: 0,
-      }}
-    >
-      <select
-        aria-label='Active model'
-        value={localModel}
-        onChange={(e) => handleChange(e.target.value)}
-        style={{
-          background: 'var(--vscode-dropdown-background, var(--vscode-input-background))',
-          color: 'var(--vscode-dropdown-foreground, var(--vscode-foreground))',
-          border: '1px solid var(--vscode-dropdown-border, var(--vscode-input-border))',
-          borderRadius: 3,
-          fontSize: 11,
-          padding: '2px 4px',
-          maxWidth: 170,
-          cursor: 'pointer',
-        }}
-      >
-        {!hasCurrentInItems && localModel !== '' && (
-          <option value={localModel}>{localModel}</option>
-        )}
-        {modelItems.map((m) => (
-          <option key={m.value} value={m.value}>
-            {m.label}
-          </option>
-        ))}
-      </select>
-      <IconBtn title='Settings' onClick={() => vscodeApi.postMessage({ type: 'openSettings' })}>
-        <GearIcon />
-      </IconBtn>
-      {usage !== null && (
-        <span
-          title='Estimated context usage'
-          style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
-        >
-          ≈{formatTokens(usage.usedTokens)} / {formatTokens(usage.maxTokens)}
-        </span>
-      )}
-    </div>
+    <footer className='composer-shell'>
+      <div className='composer'>
+        <textarea
+          className='prompt'
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            }
+          }}
+          rows={3}
+          placeholder={running ? 'agy is responding...' : 'Ask agy a quick question...'}
+        />
+        <div className='composer-rail'>
+          <IconButton title='Open in Antigravity terminal' onClick={() => vscodeApi.postMessage({ type: 'openTerminal', prompt: input.trim() || undefined })}>
+            <TerminalIcon />
+          </IconButton>
+          <select
+            className='model-select'
+            aria-label='Active model'
+            value={localModel}
+            onChange={(e) => handleModel(e.target.value)}
+            title='Active model'
+          >
+            {!hasCurrentInItems && localModel !== '' && <option value={localModel}>{localModel}</option>}
+            {modelItems.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <IconButton title='Settings' onClick={() => vscodeApi.postMessage({ type: 'openSettings' })}>
+            <GearIcon />
+          </IconButton>
+          <span className='spacer' />
+          {usage !== null && (
+            <span className='usage' title='Estimated context usage'>
+              {formatTokens(usage.usedTokens)} / {formatTokens(usage.maxTokens)}
+            </span>
+          )}
+          {running ? (
+            <IconButton title='Stop — cancel this response' onClick={() => vscodeApi.postMessage({ type: 'cancel' })} primary>
+              <StopIcon />
+            </IconButton>
+          ) : (
+            <IconButton title='Send (Enter)' onClick={onSend} primary disabled={!input.trim()}>
+              <SendIcon />
+            </IconButton>
+          )}
+        </div>
+      </div>
+    </footer>
   );
 }
-
-// ─── history view ─────────────────────────────────────────────────────────────
 
 function relativeTime(epochMs: number): string {
   const diffMs = Date.now() - epochMs;
@@ -357,270 +649,83 @@ function HistoryView({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <button
-        style={{
-          ...S.btn(false),
-          alignSelf: 'flex-start',
-          marginBottom: 4,
-          fontSize: 12,
-        }}
-        onClick={onBack}
-      >
-        ← Back
+    <div className='history-view'>
+      <button className='text-btn' style={{ alignSelf: 'flex-start', marginBottom: 6 }} onClick={onBack}>
+        Back
       </button>
       {conversations.length === 0 ? (
-        <p style={{ ...S.muted, margin: 0 }}>No conversations yet.</p>
+        <p style={mutedStyle}>No conversations yet.</p>
       ) : (
-        conversations.map((c) => {
-          const isActive = c.id === activeConversationId;
-          return (
-            <HistoryItem
-              key={c.id}
-              conversation={c}
-              isActive={isActive}
-              onSelect={onSelect}
-            />
-          );
-        })
+        conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            className={`history-item${conversation.id === activeConversationId ? ' active' : ''}`}
+            onClick={() => onSelect(conversation.id)}
+          >
+            <span className='history-title'>{conversation.title}</span>
+            <span className='history-time'>{relativeTime(conversation.updatedAt)}</span>
+          </button>
+        ))
       )}
     </div>
   );
 }
 
-function HistoryItem({
-  conversation,
-  isActive,
-  onSelect,
-}: {
-  conversation: ConversationMeta;
-  isActive: boolean;
-  onSelect: (id: string) => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <div
-      onClick={() => onSelect(conversation.id)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        padding: 8,
-        borderRadius: 3,
-        cursor: 'pointer',
-        background: isActive
-          ? 'var(--vscode-list-activeSelectionBackground)'
-          : hovered
-          ? 'var(--vscode-list-hoverBackground)'
-          : 'transparent',
-        color: isActive
-          ? 'var(--vscode-list-activeSelectionForeground, var(--vscode-foreground))'
-          : 'var(--vscode-foreground)',
-        display: 'flex',
-        flexDirection: 'column' as const,
-        gap: 2,
-      }}
-    >
-      <span
-        style={{
-          fontSize: 12,
-          fontWeight: 500,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap' as const,
-        }}
-      >
-        {conversation.title}
-      </span>
-      <span style={{ ...S.muted, fontSize: 11 }}>{relativeTime(conversation.updatedAt)}</span>
-    </div>
-  );
-}
+const mutedStyle: CSSProperties = {
+  color: 'var(--calm-muted)',
+  margin: 0,
+  lineHeight: 1.5,
+};
 
-// ─── sub-components ─────────────────────────────────────────────────────────
-
-function OpenTerminalBtn({ input }: { input: string }) {
+function OpenTerminalButton({ input }: { input: string }) {
   return (
-    <button
-      style={S.btn(false)}
-      onClick={() => vscodeApi.postMessage({ type: 'openTerminal', prompt: input || undefined })}
-    >
+    <button className='text-btn' onClick={() => vscodeApi.postMessage({ type: 'openTerminal', prompt: input || undefined })}>
       Open in Terminal
     </button>
   );
 }
 
-function PromptBox({
-  input,
-  setInput,
-  onSend,
-  disabled,
-  hint,
-}: {
-  input: string;
-  setInput: (v: string) => void;
-  onSend: () => void;
-  disabled?: boolean;
-  hint?: string;
-}) {
+function EmptyState({ onSuggestion }: { onSuggestion: (text: string) => void }) {
+  const suggestions = [
+    'Explain this codebase',
+    'Find bugs in the current file',
+    'Write tests for selected code',
+    'Refactor this to be simpler',
+  ];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <textarea
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            onSend();
-          }
-        }}
-        rows={3}
-        style={S.textarea}
-        placeholder={hint ?? 'Ask agy a quick question… (Enter to send)'}
-        disabled={disabled}
-      />
-      <div style={S.row}>
-        <button style={S.btn(true)} onClick={onSend} disabled={disabled || !input.trim()}>
-          Send
-        </button>
+    <section className='empty-state'>
+      <CalmLogo />
+      <h1 className='empty-title'>CalmUI for Antigravity CLI</h1>
+      <p className='empty-subtitle'>Ask agy anything about your workspace.</p>
+      <div className='suggestions'>
+        {suggestions.map((text) => (
+          <button key={text} className='suggestion' onClick={() => onSuggestion(text)}>
+            {text}
+          </button>
+        ))}
       </div>
-    </div>
+    </section>
   );
 }
-
-function SetupStrip() {
-  const steps = ['Install agy', 'Sign in', 'Ask anything'];
-  return (
-    <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
-      {steps.map((label, i) => {
-        const isActive = i === 2;
-        const isDone = i < 2;
-        return (
-          <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '4px 8px',
-                borderRadius: 3,
-                background: isActive
-                  ? 'var(--vscode-button-background)'
-                  : 'var(--vscode-input-background)',
-                color: isActive
-                  ? 'var(--vscode-button-foreground)'
-                  : 'var(--vscode-descriptionForeground)',
-                fontSize: 11,
-                fontWeight: isActive ? 600 : 400,
-                border: '1px solid var(--vscode-input-border)',
-              }}
-            >
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: 16,
-                  height: 16,
-                  borderRadius: '50%',
-                  background: isActive
-                    ? 'var(--vscode-button-foreground)'
-                    : isDone
-                    ? 'var(--vscode-button-background)'
-                    : 'var(--vscode-input-border)',
-                  color: isActive
-                    ? 'var(--vscode-button-background)'
-                    : isDone
-                    ? 'var(--vscode-button-foreground)'
-                    : 'var(--vscode-descriptionForeground)',
-                  fontSize: 10,
-                  fontWeight: 700,
-                }}
-              >
-                {isDone ? '✓' : i + 1}
-              </span>
-              {label}
-            </div>
-            {i < steps.length - 1 && (
-              <div
-                style={{
-                  width: 16,
-                  height: 1,
-                  background: 'var(--vscode-input-border)',
-                }}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── state panels ────────────────────────────────────────────────────────────
 
 function MissingCLIPanel({ input }: { input: string }) {
   return (
-    <>
-      <p style={{ ...S.muted, margin: 0 }}>
-        <strong style={{ color: 'var(--vscode-foreground)' }}>agy not found.</strong>{' '}
-        Install the Antigravity CLI to get started.
-      </p>
-      <div style={S.card}>
-        <div style={{ fontSize: 12, fontWeight: 600 }}>Install steps</div>
-        <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.7 }}>
-          <li>Download and install the Antigravity CLI (<code>agy</code>)</li>
-          <li>Ensure <code>agy</code> is on your <code>PATH</code></li>
-          <li>Fully quit and reopen VS Code</li>
-        </ol>
-        <p style={{ ...S.muted, margin: 0, fontStyle: 'italic' }}>
-          After installing: fully quit and reopen the editor.
-        </p>
-      </div>
-      <div style={S.row}>
-        <button
-          style={S.btn(true)}
-          onClick={() => vscodeApi.postMessage({ type: 'runDiagnostics' })}
-        >
+    <div className='status-card'>
+      <div className='status-title'>agy not found</div>
+      <div style={mutedStyle}>Install the Antigravity CLI and make sure <code>agy</code> is on your PATH, then fully reopen the editor.</div>
+      <div className='status-actions'>
+        <button className='text-btn primary' onClick={() => vscodeApi.postMessage({ type: 'runDiagnostics' })}>
           Run Diagnostics
         </button>
-        <OpenTerminalBtn input={input} />
+        <OpenTerminalButton input={input} />
       </div>
-    </>
+    </div>
   );
 }
 
-function OnboardingPanel({
-  input,
-  setInput,
-  onSend,
-}: {
-  input: string;
-  setInput: (v: string) => void;
-  onSend: () => void;
-}) {
-  return (
-    <>
-      <p style={{ ...S.muted, margin: 0 }}>
-        Best for quick asks — fire a question and get an answer without leaving your editor.
-      </p>
-      <SetupStrip />
-      <div style={S.card}>
-        <div style={{ fontSize: 12 }}>
-          <strong>For full agent sessions</strong>, open the Antigravity terminal.
-        </div>
-        <div>
-          <OpenTerminalBtn input={input} />
-        </div>
-      </div>
-      <div style={S.divider} />
-      <PromptBox
-        input={input}
-        setInput={setInput}
-        onSend={onSend}
-        hint="Ask a quick question… (Enter to send)"
-      />
-    </>
-  );
+function OnboardingPanel({ onSuggestion }: { onSuggestion: (text: string) => void }) {
+  return <EmptyState onSuggestion={onSuggestion} />;
 }
 
 function TranscriptView({
@@ -631,53 +736,29 @@ function TranscriptView({
   errorIds: Set<string>;
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div className='transcript'>
       {messages.map((m) => {
         const isError = errorIds.has(m.id);
+        const roleClass = m.role === 'user' ? 'user' : 'assistant';
         return (
-          <div
-            key={m.id}
-            style={{
-              background:
-                m.role === 'user'
-                  ? 'var(--vscode-input-background)'
-                  : 'transparent',
-              border:
-                m.role === 'user'
-                  ? '1px solid var(--vscode-input-border)'
-                  : 'none',
-              borderRadius: 3,
-              padding: m.role === 'user' ? '6px 8px' : '2px 0',
-            }}
-          >
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: 'var(--vscode-descriptionForeground)',
-                marginBottom: 3,
-              }}
-            >
-              {m.role === 'user' ? 'You' : 'agy'}
+          <article key={m.id} className={`message ${roleClass}`}>
+            <div className='message-label'>{m.role === 'user' ? 'You' : 'agy'}</div>
+            <div className='bubble'>
+              {m.role === 'user' || isError ? (
+                <div>{m.text}</div>
+              ) : m.pending && !m.text ? (
+                <span className='thinking'>Thinking...</span>
+              ) : (
+                <>
+                  <div
+                    className='calm-md'
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
+                  />
+                  {m.pending && <span className='thinking'> Streaming...</span>}
+                </>
+              )}
             </div>
-            {m.role === 'user' || isError ? (
-              <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                {m.text}
-              </div>
-            ) : m.pending && !m.text ? (
-              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                <span style={{ opacity: 0.5 }}>thinking…</span>
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                <div
-                  className='calm-md'
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
-                />
-                {m.pending && <span style={{ opacity: 0.5 }}>▋</span>}
-              </div>
-            )}
-          </div>
+          </article>
         );
       })}
     </div>
@@ -687,25 +768,16 @@ function TranscriptView({
 function ReadyPanel({
   messages,
   errorIds,
-  input,
-  setInput,
-  onSend,
+  onSuggestion,
 }: {
   messages: ChatMessage[];
   errorIds: Set<string>;
-  input: string;
-  setInput: (v: string) => void;
-  onSend: () => void;
+  onSuggestion: (text: string) => void;
 }) {
-  return (
-    <>
-      {messages.length === 0 ? (
-        <p style={{ ...S.muted, margin: 0 }}>Send a prompt to get started.</p>
-      ) : (
-        <TranscriptView messages={messages} errorIds={errorIds} />
-      )}
-      <PromptBox input={input} setInput={setInput} onSend={onSend} />
-    </>
+  return messages.length === 0 ? (
+    <EmptyState onSuggestion={onSuggestion} />
+  ) : (
+    <TranscriptView messages={messages} errorIds={errorIds} />
   );
 }
 
@@ -716,54 +788,32 @@ function RunningPanel({
   messages: ChatMessage[];
   errorIds: Set<string>;
 }) {
-  return (
-    <>
-      <TranscriptView messages={messages} errorIds={errorIds} />
-      <div style={S.row}>
-        <span style={S.muted}>Running…</span>
-        <button
-          style={S.btn(false)}
-          onClick={() => vscodeApi.postMessage({ type: 'cancel' })}
-        >
-          Cancel
-        </button>
-      </div>
-    </>
-  );
+  return <TranscriptView messages={messages} errorIds={errorIds} />;
 }
 
 function ErrorPanel({
   messages,
   errorIds,
   input,
-  setInput,
-  onSend,
 }: {
   messages: ChatMessage[];
   errorIds: Set<string>;
   input: string;
-  setInput: (v: string) => void;
-  onSend: () => void;
 }) {
   return (
-    <>
+    <div className='transcript'>
       {messages.length > 0 && <TranscriptView messages={messages} errorIds={errorIds} />}
-      <div style={S.card}>
-        <div style={{ fontSize: 12, color: 'var(--vscode-errorForeground, #f48771)' }}>
-          Something went wrong. You can retry here or continue in the full Antigravity terminal.
-        </div>
-        <div style={S.row}>
-          <button
-            style={S.btn(true)}
-            onClick={() => vscodeApi.postMessage({ type: 'runDiagnostics' })}
-          >
+      <div className='status-card'>
+        <div className='status-title'>Something went wrong</div>
+        <div style={mutedStyle}>You can retry here or continue in the full Antigravity terminal.</div>
+        <div className='status-actions'>
+          <button className='text-btn primary' onClick={() => vscodeApi.postMessage({ type: 'runDiagnostics' })}>
             Run Diagnostics
           </button>
-          <OpenTerminalBtn input={input} />
+          <OpenTerminalButton input={input} />
         </div>
       </div>
-      <PromptBox input={input} setInput={setInput} onSend={onSend} hint="Try again…" />
-    </>
+    </div>
   );
 }
 
@@ -771,45 +821,30 @@ function HandoffPanel({
   messages,
   errorIds,
   input,
-  setInput,
-  onSend,
 }: {
   messages: ChatMessage[];
   errorIds: Set<string>;
   input: string;
-  setInput: (v: string) => void;
-  onSend: () => void;
 }) {
   return (
-    <>
+    <div className='transcript'>
       {messages.length > 0 && <TranscriptView messages={messages} errorIds={errorIds} />}
-      <div style={S.card}>
-        <div style={{ fontSize: 12 }}>
-          <strong>This looks like a longer task.</strong> For best results, continue in the
-          full Antigravity terminal where agy can take multi-step actions.
-        </div>
-        <div style={S.row}>
-          <OpenTerminalBtn input={input} />
+      <div className='status-card'>
+        <div className='status-title'>Continue in the Antigravity terminal</div>
+        <div style={mutedStyle}>This looks like a longer task. agy can take multi-step actions from the full terminal.</div>
+        <div className='status-actions'>
+          <OpenTerminalButton input={input} />
         </div>
       </div>
-      <PromptBox
-        input={input}
-        setInput={setInput}
-        onSend={onSend}
-        hint="Or ask a quick follow-up…"
-      />
-    </>
+    </div>
   );
 }
 
 function CheckingPanel() {
-  return <p style={S.muted}>Checking for agy…</p>;
+  return <p style={mutedStyle}>Checking for agy...</p>;
 }
 
-// ─── root app ────────────────────────────────────────────────────────────────
-
-// States that show the composer (and thus the bottom bar)
-const SHOWS_BOTTOM_BAR = new Set<PanelStatus>([
+const SHOWS_COMPOSER = new Set<PanelStatus>([
   'onboarding',
   'ready',
   'running',
@@ -822,18 +857,13 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorIds, setErrorIds] = useState<Set<string>>(new Set());
   const [input, setInput] = useState('');
-
-  // History / conversations
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-
-  // Models
   const [modelItems, setModelItems] = useState<ModelChoice[]>([]);
   const [modelCurrent, setModelCurrent] = useState('');
-
-  // Usage
   const [usage, setUsage] = useState<{ usedTokens: number; maxTokens: number } | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent<HostToWebview>) => {
@@ -863,8 +893,8 @@ function App() {
                 return prev.map((x) => {
                   if (x.id !== m.id) return x;
                   const warningText = x.text
-                    ? `${x.text}\n⚠ ${m.text}`
-                    : `⚠ ${m.text}`;
+                    ? `${x.text}\nWarning: ${m.text}`
+                    : `Warning: ${m.text}`;
                   return { ...x, pending: false, text: warningText };
                 });
               }
@@ -872,7 +902,7 @@ function App() {
               setErrorIds((ids) => new Set(ids).add(newId));
               return [
                 ...prev,
-                { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
+                { id: newId, role: 'assistant' as const, text: `Warning: ${m.text}` },
               ];
             });
             setErrorIds((ids) => new Set(ids).add(m.id!));
@@ -881,7 +911,7 @@ function App() {
             setErrorIds((ids) => new Set(ids).add(newId));
             setMessages((prev) => [
               ...prev,
-              { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
+              { id: newId, role: 'assistant' as const, text: `Warning: ${m.text}` },
             ]);
           }
           break;
@@ -902,7 +932,6 @@ function App() {
           setUsage({ usedTokens: m.usedTokens, maxTokens: m.maxTokens });
           break;
         default: {
-          // exhaustive guard — TypeScript will error if a variant is unhandled
           const _: never = m;
           void _;
           break;
@@ -910,15 +939,26 @@ function App() {
       }
     };
     window.addEventListener('message', onMsg);
+    // Listener is attached — ask the host for the boot bundle.
+    vscodeApi.postMessage({ type: 'webviewReady' });
     return () => window.removeEventListener('message', onMsg);
   }, []);
 
+  useEffect(() => {
+    if (historyOpen) return;
+    const node = contentRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messages, historyOpen]);
+
   const send = () => {
     const text = input.trim();
-    if (!text) return;
-    // The host posts the user message back — it owns the transcript mirror.
+    if (!text || status === 'running') return;
     vscodeApi.postMessage({ type: 'send', text });
     setInput('');
+  };
+
+  const fillSuggestion = (text: string) => {
+    setInput(text);
   };
 
   const newConversation = () => {
@@ -946,9 +986,7 @@ function App() {
     setHistoryOpen(false);
   };
 
-  // Main panel content (replaces main area when history is open)
-  let panelContent: React.ReactNode;
-
+  let panelContent: ReactNode;
   if (historyOpen) {
     panelContent = (
       <HistoryView
@@ -967,45 +1005,19 @@ function App() {
         panelContent = <MissingCLIPanel input={input} />;
         break;
       case 'onboarding':
-        panelContent = (
-          <OnboardingPanel input={input} setInput={setInput} onSend={send} />
-        );
+        panelContent = <OnboardingPanel onSuggestion={fillSuggestion} />;
         break;
       case 'ready':
-        panelContent = (
-          <ReadyPanel
-            messages={messages}
-            errorIds={errorIds}
-            input={input}
-            setInput={setInput}
-            onSend={send}
-          />
-        );
+        panelContent = <ReadyPanel messages={messages} errorIds={errorIds} onSuggestion={fillSuggestion} />;
         break;
       case 'running':
         panelContent = <RunningPanel messages={messages} errorIds={errorIds} />;
         break;
       case 'error':
-        panelContent = (
-          <ErrorPanel
-            messages={messages}
-            errorIds={errorIds}
-            input={input}
-            setInput={setInput}
-            onSend={send}
-          />
-        );
+        panelContent = <ErrorPanel messages={messages} errorIds={errorIds} input={input} />;
         break;
       case 'handoff-recommended':
-        panelContent = (
-          <HandoffPanel
-            messages={messages}
-            errorIds={errorIds}
-            input={input}
-            setInput={setInput}
-            onSend={send}
-          />
-        );
+        panelContent = <HandoffPanel messages={messages} errorIds={errorIds} input={input} />;
         break;
       default: {
         const _: never = status;
@@ -1015,15 +1027,22 @@ function App() {
     }
   }
 
-  const showBottomBar = SHOWS_BOTTOM_BAR.has(status);
+  const emptyContent = !historyOpen && (status === 'onboarding' || (status === 'ready' && messages.length === 0));
+  const showComposer = SHOWS_COMPOSER.has(status) && !historyOpen;
 
   return (
-    <main style={S.root}>
-      <MarkdownStyles />
-      <TopBar onHistory={toggleHistory} onNewChat={newConversation} />
-      <div style={S.scrollArea}>{panelContent}</div>
-      {showBottomBar && (
-        <BottomBar
+    <main className='app'>
+      <Styles />
+      <TopBar status={status} onHistory={toggleHistory} onNewChat={newConversation} />
+      <div ref={contentRef} className={`content${emptyContent ? ' empty' : ''}`}>
+        {panelContent}
+      </div>
+      {showComposer && (
+        <Composer
+          input={input}
+          setInput={setInput}
+          onSend={send}
+          running={status === 'running'}
           modelItems={modelItems}
           modelCurrent={modelCurrent}
           usage={usage}
