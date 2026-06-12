@@ -1,19 +1,33 @@
 import * as vscode from 'vscode';
 import type { AgyTransport } from '../transport/AgyTransport';
-import type { WebviewToHost, HostToWebview } from '../shared/messages';
+import type { ChatMessage, ConversationMeta, HostToWebview, ModelChoice, WebviewToHost } from '../shared/messages';
 
-/**
- * Webview view provider for the CalmUI panel.
- *
- * STATUS: scaffold. Wires the webview <-> transport message bridge and renders
- * the bundled webview. The actual UI states (onboarding, running, handoff card)
- * are built in Phases 1–3 — see .planning/2026-06-11-build-plan.md.
- */
+const CONV_STORE_KEY = 'calmui.conversations';
+const MAX_CONVERSATIONS = 50;
+const MAX_CONTEXT_TOKENS = 1048576;
+
+const MODEL_CHOICES: ModelChoice[] = [
+  { label: 'Default (agy)', value: '' },
+  { label: 'Gemini 3.5 Flash · Low', value: 'gemini-3.5-flash-low' },
+  { label: 'Gemini 3.5 Flash', value: 'gemini-3.5-flash' },
+  { label: 'Gemini 3.5 Flash · High', value: 'gemini-3.5-flash-high' },
+  { label: 'Gemini 3.1 Pro', value: 'gemini-3.1-pro' },
+];
+
+interface StoredConversation {
+  id: string;
+  title: string;
+  updatedAt: number;
+  messages: ChatMessage[];
+}
+
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private turn = 0;
   /** The agy conversation ID for the current thread; undefined = fresh. */
   private conversationId: string | undefined;
+  /** Host-side mirror of the active transcript. */
+  private messages: ChatMessage[] = [];
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -33,6 +47,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     });
 
     void this.refreshState();
+    this.post(this.modelsMessage());
+    this.post({ type: 'conversations', items: this.loadMetas() });
+    this.post({ type: 'hydrate', messages: [...this.messages], conversationId: this.conversationId });
+    this.post(this.usageMessage());
   }
 
   private async refreshState(): Promise<void> {
@@ -40,7 +58,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const a = await this.transport.checkAvailability(false);
     if (!a.found) {
       this.post({ type: 'state', status: 'missing-cli', detail: a.detail });
-    } else if (this.turn === 0) {
+    } else if (this.messages.length === 0) {
       this.post({ type: 'state', status: 'onboarding', detail: a.version });
     } else {
       this.post({ type: 'state', status: 'ready', detail: a.version });
@@ -50,13 +68,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private async handle(m: WebviewToHost): Promise<void> {
     switch (m.type) {
       case 'send': {
-        const id = `a${++this.turn}`;
+        const assistantId = `a${++this.turn}`;
+        const userId = `u${this.turn}`;
+
+        // Push user message into host mirror immediately.
+        const userMsg: ChatMessage = { id: userId, role: 'user', text: m.text };
+        this.messages.push(userMsg);
+        this.post({ type: 'message', message: userMsg });
+
         this.post({
           type: 'message',
-          message: { id, role: 'assistant', text: '', pending: true },
+          message: { id: assistantId, role: 'assistant', text: '', pending: true },
         });
         this.post({ type: 'state', status: 'running' });
-        // Build options from VS Code settings + current conversation state.
+
         const cfg = vscode.workspace.getConfiguration('calmui-agy');
         const model = cfg.get<string>('model', '');
         const opts = {
@@ -68,27 +93,50 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
           conversationId: this.conversationId,
         };
+
         try {
           const res = await this.transport.sendPrompt(m.text, opts, (clean) =>
-            this.post({ type: 'partial', id, text: clean }),
+            this.post({ type: 'partial', id: assistantId, text: clean }),
           );
-          // Persist a new conversation ID; keep the existing one if none returned.
+
           if (res.conversationId) {
             this.conversationId = res.conversationId;
           }
-          this.post({ type: 'partial', id, text: res.text });
-          this.post({ type: 'done', id });
+
+          // Empty-response guard: treat as error.
+          if (res.text.trim() === '') {
+            const errText =
+              "agy returned an empty response. If you selected a model, it may be unavailable — try 'Default (agy)'.";
+            const errMsg: ChatMessage = { id: assistantId, role: 'assistant', text: errText };
+            this.messages.push(errMsg);
+            this.post({ type: 'error', id: assistantId, text: errText });
+            this.post({ type: 'state', status: 'handoff-recommended' });
+            // Don't persist: the assistant side was an error with no real content.
+            break;
+          }
+
+          const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', text: res.text };
+          this.messages.push(assistantMsg);
+
+          this.post({ type: 'partial', id: assistantId, text: res.text });
+          this.post({ type: 'done', id: assistantId });
           this.post({ type: 'state', status: 'ready' });
+
+          if (this.conversationId) {
+            this.persistConversation(m.text);
+            this.post({ type: 'conversations', items: this.loadMetas() });
+            this.post(this.usageMessage());
+          }
         } catch (err) {
           const raw = err instanceof Error ? err.message : String(err);
-          // Timeout and node-pty-missing messages are already actionable; anything
-          // else gets a short human lead-in so users aren't staring at a raw stack.
           const isAlreadyFriendly =
             raw.startsWith('CalmUI:') || raw.includes('node-pty');
           const text = isAlreadyFriendly
             ? raw
             : `agy failed: ${raw}. Run Diagnostics for details, or continue in the terminal.`;
-          this.post({ type: 'error', id, text });
+          const errMsg: ChatMessage = { id: assistantId, role: 'assistant', text };
+          this.messages.push(errMsg);
+          this.post({ type: 'error', id: assistantId, text });
           this.post({ type: 'state', status: 'handoff-recommended' });
         }
         break;
@@ -101,15 +149,94 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.transport.openInteractiveTerminal(m.prompt);
         break;
       case 'newConversation':
-        // Clear the thread so the next send starts a fresh agy conversation.
         this.conversationId = undefined;
+        this.messages = [];
+        this.post({ type: 'hydrate', messages: [] });
+        this.post(this.usageMessage());
         void this.refreshState();
+        break;
+      case 'switchConversation': {
+        const stored = this.loadAll().find((c) => c.id === m.id);
+        if (stored) {
+          this.conversationId = stored.id;
+          this.messages = [...stored.messages];
+          this.post({ type: 'hydrate', messages: [...stored.messages], conversationId: stored.id });
+          this.post(this.usageMessage());
+          this.post({ type: 'state', status: 'ready' });
+        }
+        break;
+      }
+      case 'listConversations':
+        this.post({ type: 'conversations', items: this.loadMetas() });
+        break;
+      case 'setModel': {
+        const cfg = vscode.workspace.getConfiguration('calmui-agy');
+        const target = vscode.workspace.workspaceFolders
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+        try {
+          await cfg.update('model', m.model || undefined, target);
+        } catch {
+          // best-effort; carry on
+        }
+        this.post(this.modelsMessage());
+        break;
+      }
+      case 'openSettings':
+        void vscode.commands.executeCommand('workbench.action.openSettings', 'calmui-agy');
         break;
       case 'runDiagnostics':
         void vscode.commands.executeCommand('calmui-agy.runDiagnostics');
         break;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Persistence helpers
+  // ---------------------------------------------------------------------------
+
+  private loadAll(): StoredConversation[] {
+    return this.context.workspaceState.get<StoredConversation[]>(CONV_STORE_KEY, []);
+  }
+
+  private loadMetas(): ConversationMeta[] {
+    return this.loadAll().map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
+  }
+
+  private persistConversation(firstPrompt: string): void {
+    if (!this.conversationId) return;
+
+    const all = this.loadAll().filter((c) => c.id !== this.conversationId);
+    const existing = this.loadAll().find((c) => c.id === this.conversationId);
+    const title = existing?.title ?? firstPrompt.slice(0, 60);
+
+    const updated: StoredConversation = {
+      id: this.conversationId,
+      title,
+      updatedAt: Date.now(),
+      messages: [...this.messages],
+    };
+
+    // Most-recent-first, capped at MAX_CONVERSATIONS.
+    const next = [updated, ...all].slice(0, MAX_CONVERSATIONS);
+    void this.context.workspaceState.update(CONV_STORE_KEY, next);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Usage / models helpers
+  // ---------------------------------------------------------------------------
+
+  private usageMessage(): HostToWebview & { type: 'usage' } {
+    const chars = this.messages.reduce((sum, msg) => sum + msg.text.length, 0);
+    return { type: 'usage', usedTokens: Math.round(chars / 4), maxTokens: MAX_CONTEXT_TOKENS };
+  }
+
+  private modelsMessage(): HostToWebview & { type: 'models' } {
+    const current = vscode.workspace.getConfiguration('calmui-agy').get<string>('model', '') ?? '';
+    return { type: 'models', items: MODEL_CHOICES, current };
+  }
+
+  // ---------------------------------------------------------------------------
 
   private post(msg: HostToWebview): void {
     void this.view?.webview.postMessage(msg);
