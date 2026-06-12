@@ -11,7 +11,11 @@ A calm, lightweight quick-ask side panel for the Antigravity CLI (`agy`) inside 
 
 - **Quick-ask panel** in the activity bar — press **Ctrl+Shift+A** (Cmd+Shift+A on Mac) to focus
 - **Streamed responses** from `agy -p` over a real pseudo-terminal — agy only emits output to a TTY
-- **Multi-turn conversations** — threads use `--conversation <id>` automatically; click "New conversation" to reset
+- **Conversation history** — past conversations are saved per workspace; reopen any of them from the history button in the top bar (resumes via `--conversation <id>`)
+- **New chat** button in the top bar
+- **Model switcher** in the bottom bar — pick between Gemini 3.5 Flash (Low/Medium/High) and Gemini 3.1 Pro, or agy's default (writes the `calmui-agy.model` setting)
+- **Context usage estimate** in the bottom bar (≈ tokens used vs. the 1M window — an estimate; agy doesn't report usage in headless mode)
+- **Settings shortcut** (gear icon) in the bottom bar
 - **Markdown rendering** of agy responses
 - **Cancel in-flight prompts** without restarting
 - **Guided onboarding** when agy is missing, plus `CalmUI: Run Diagnostics` command (binary detection, version, resolved path, auth probe)
@@ -38,7 +42,7 @@ No marketplace listing yet — install via VSIX sideload:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `calmui-agy.agyPath` | `agy` | Absolute path to the agy CLI binary. Leave as `agy` to resolve from `PATH`. Windows default: `%LOCALAPPDATA%\agy\bin\agy.exe` |
-| `calmui-agy.model` | *(empty)* | Model override passed as `--model` on each prompt. Leave empty to use agy's default. |
+| `calmui-agy.model` | *(empty)* | Model override passed as `--model` on each prompt. Leave empty to use agy's default. Also settable from the model dropdown in the panel. |
 | `calmui-agy.includeDirectories` | `[]` | Extra folders outside the workspace that agy can read. Passed as `--add-dir` on every prompt. Use absolute paths. |
 | `calmui-agy.printTimeoutSeconds` | `120` | Timeout for a single quick-ask prompt, passed as `--print-timeout`. The agy default is 5 minutes. |
 

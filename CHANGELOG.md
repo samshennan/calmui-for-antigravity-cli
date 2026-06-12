@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0] - 2026-06-12
+
+### Added
+
+- Top bar with conversation history (per-workspace, resumable) and New chat
+- Bottom bar: model switcher (verified models: Gemini 3.5 Flash Low/Medium/High, Gemini 3.1 Pro), settings shortcut, estimated context usage meter
+- Transcript now survives hiding/reshowing the panel (host-side hydration)
+
+### Changed
+
+- "New conversation" moved from inline buttons to the top bar
+
+### Fixed
+
+- Selecting an unavailable model no longer yields a silent empty reply — it now shows an actionable error
+
 ## [0.1.0] - 2026-06-12
 
 ### Added
