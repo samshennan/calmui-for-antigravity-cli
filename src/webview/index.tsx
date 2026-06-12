@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { useEffect, useState } from 'react';
 import { marked } from 'marked';
-import type { ChatMessage, HostToWebview, PanelStatus } from '../shared/messages';
+import type { ChatMessage, ConversationMeta, HostToWebview, ModelChoice, PanelStatus } from '../shared/messages';
 
 declare const acquireVsCodeApi: () => { postMessage: (m: unknown) => void };
 const vscodeApi = acquireVsCodeApi();
@@ -29,12 +29,19 @@ const S = {
     fontFamily: 'var(--vscode-font-family)',
     fontSize: 13,
     color: 'var(--vscode-foreground)',
+    padding: '0',
+    display: 'flex' as const,
+    flexDirection: 'column' as const,
+    minHeight: '100vh',
+    boxSizing: 'border-box' as const,
+  },
+  scrollArea: {
     padding: '12px 14px',
     display: 'flex' as const,
     flexDirection: 'column' as const,
     gap: 12,
-    minHeight: '100vh',
-    boxSizing: 'border-box' as const,
+    flex: 1,
+    overflowY: 'auto' as const,
   },
   muted: {
     color: 'var(--vscode-descriptionForeground)',
@@ -141,11 +148,295 @@ function MarkdownStyles() {
   return <style>{MARKDOWN_CSS}</style>;
 }
 
-// ─── sub-components ─────────────────────────────────────────────────────────
+// ─── icon button ─────────────────────────────────────────────────────────────
 
-function HeroTitle() {
-  return <h1 style={S.hero}>CalmUI</h1>;
+function IconBtn({
+  title,
+  onClick,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      type='button'
+      title={title}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        padding: 4,
+        cursor: 'pointer',
+        color: 'var(--vscode-foreground)',
+        opacity: hovered ? 1 : 0.7,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        lineHeight: 0,
+      }}
+    >
+      {children}
+    </button>
+  );
 }
+
+// ─── icon SVGs ───────────────────────────────────────────────────────────────
+
+function ClockIcon() {
+  return (
+    <svg width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' strokeLinejoin='round'>
+      <circle cx='8' cy='8' r='6.5' />
+      <polyline points='8,4.5 8,8 10.5,10' />
+    </svg>
+  );
+}
+
+function NewChatIcon() {
+  return (
+    <svg width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' strokeLinejoin='round'>
+      <rect x='2' y='2' width='12' height='12' rx='2' />
+      <line x1='8' y1='5.5' x2='8' y2='10.5' />
+      <line x1='5.5' y1='8' x2='10.5' y2='8' />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' strokeLinejoin='round'>
+      <circle cx='8' cy='8' r='2.5' />
+      <path d='M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M12.6 3.4l-.85.85M4.25 11.75l-.85.85' />
+    </svg>
+  );
+}
+
+// ─── top bar ─────────────────────────────────────────────────────────────────
+
+function TopBar({
+  onHistory,
+  onNewChat,
+}: {
+  onHistory: () => void;
+  onNewChat: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '6px 10px 6px 14px',
+        borderBottom: '1px solid var(--vscode-input-border)',
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: '-0.2px' }}>CalmUI</span>
+      <div style={{ display: 'flex', gap: 2 }}>
+        <IconBtn title='History' onClick={onHistory}>
+          <ClockIcon />
+        </IconBtn>
+        <IconBtn title='New conversation' onClick={onNewChat}>
+          <NewChatIcon />
+        </IconBtn>
+      </div>
+    </div>
+  );
+}
+
+// ─── bottom bar ──────────────────────────────────────────────────────────────
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+function BottomBar({
+  modelItems,
+  modelCurrent,
+  usage,
+}: {
+  modelItems: ModelChoice[];
+  modelCurrent: string;
+  usage: { usedTokens: number; maxTokens: number } | null;
+}) {
+  const [localModel, setLocalModel] = useState(modelCurrent);
+
+  // Sync when host pushes a new current value
+  useEffect(() => {
+    setLocalModel(modelCurrent);
+  }, [modelCurrent]);
+
+  const hasCurrentInItems = modelItems.some((m) => m.value === localModel);
+
+  const handleChange = (value: string) => {
+    setLocalModel(value);
+    vscodeApi.postMessage({ type: 'setModel', model: value });
+  };
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 10px 4px 14px',
+        borderTop: '1px solid var(--vscode-input-border)',
+        fontSize: 11,
+        color: 'var(--vscode-descriptionForeground)',
+        flexShrink: 0,
+      }}
+    >
+      <select
+        aria-label='Active model'
+        value={localModel}
+        onChange={(e) => handleChange(e.target.value)}
+        style={{
+          background: 'var(--vscode-dropdown-background, var(--vscode-input-background))',
+          color: 'var(--vscode-dropdown-foreground, var(--vscode-foreground))',
+          border: '1px solid var(--vscode-dropdown-border, var(--vscode-input-border))',
+          borderRadius: 3,
+          fontSize: 11,
+          padding: '2px 4px',
+          maxWidth: 170,
+          cursor: 'pointer',
+        }}
+      >
+        {!hasCurrentInItems && localModel !== '' && (
+          <option value={localModel}>{localModel}</option>
+        )}
+        {modelItems.map((m) => (
+          <option key={m.value} value={m.value}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <IconBtn title='Settings' onClick={() => vscodeApi.postMessage({ type: 'openSettings' })}>
+        <GearIcon />
+      </IconBtn>
+      {usage !== null && (
+        <span
+          title='Estimated context usage'
+          style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
+        >
+          ≈{formatTokens(usage.usedTokens)} / {formatTokens(usage.maxTokens)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── history view ─────────────────────────────────────────────────────────────
+
+function relativeTime(epochMs: number): string {
+  const diffMs = Date.now() - epochMs;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay}d ago`;
+}
+
+function HistoryView({
+  conversations,
+  activeConversationId,
+  onBack,
+  onSelect,
+}: {
+  conversations: ConversationMeta[];
+  activeConversationId: string | null;
+  onBack: () => void;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button
+        style={{
+          ...S.btn(false),
+          alignSelf: 'flex-start',
+          marginBottom: 4,
+          fontSize: 12,
+        }}
+        onClick={onBack}
+      >
+        ← Back
+      </button>
+      {conversations.length === 0 ? (
+        <p style={{ ...S.muted, margin: 0 }}>No conversations yet.</p>
+      ) : (
+        conversations.map((c) => {
+          const isActive = c.id === activeConversationId;
+          return (
+            <HistoryItem
+              key={c.id}
+              conversation={c}
+              isActive={isActive}
+              onSelect={onSelect}
+            />
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function HistoryItem({
+  conversation,
+  isActive,
+  onSelect,
+}: {
+  conversation: ConversationMeta;
+  isActive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onClick={() => onSelect(conversation.id)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        padding: 8,
+        borderRadius: 3,
+        cursor: 'pointer',
+        background: isActive
+          ? 'var(--vscode-list-activeSelectionBackground)'
+          : hovered
+          ? 'var(--vscode-list-hoverBackground)'
+          : 'transparent',
+        color: isActive
+          ? 'var(--vscode-list-activeSelectionForeground, var(--vscode-foreground))'
+          : 'var(--vscode-foreground)',
+        display: 'flex',
+        flexDirection: 'column' as const,
+        gap: 2,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap' as const,
+        }}
+      >
+        {conversation.title}
+      </span>
+      <span style={{ ...S.muted, fontSize: 11 }}>{relativeTime(conversation.updatedAt)}</span>
+    </div>
+  );
+}
+
+// ─── sub-components ─────────────────────────────────────────────────────────
 
 function OpenTerminalBtn({ input }: { input: string }) {
   return (
@@ -270,7 +561,6 @@ function SetupStrip() {
 function MissingCLIPanel({ input }: { input: string }) {
   return (
     <>
-      <HeroTitle />
       <p style={{ ...S.muted, margin: 0 }}>
         <strong style={{ color: 'var(--vscode-foreground)' }}>agy not found.</strong>{' '}
         Install the Antigravity CLI to get started.
@@ -310,7 +600,6 @@ function OnboardingPanel({
 }) {
   return (
     <>
-      <HeroTitle />
       <p style={{ ...S.muted, margin: 0 }}>
         Best for quick asks — fire a question and get an answer without leaving your editor.
       </p>
@@ -401,28 +690,19 @@ function ReadyPanel({
   input,
   setInput,
   onSend,
-  onNewConversation,
 }: {
   messages: ChatMessage[];
   errorIds: Set<string>;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
-  onNewConversation: () => void;
 }) {
   return (
     <>
       {messages.length === 0 ? (
         <p style={{ ...S.muted, margin: 0 }}>Send a prompt to get started.</p>
       ) : (
-        <>
-          <TranscriptView messages={messages} errorIds={errorIds} />
-          <div style={S.row}>
-            <button style={S.btn(false)} onClick={onNewConversation}>
-              New conversation
-            </button>
-          </div>
-        </>
+        <TranscriptView messages={messages} errorIds={errorIds} />
       )}
       <PromptBox input={input} setInput={setInput} onSend={onSend} />
     </>
@@ -493,14 +773,12 @@ function HandoffPanel({
   input,
   setInput,
   onSend,
-  onNewConversation,
 }: {
   messages: ChatMessage[];
   errorIds: Set<string>;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
-  onNewConversation: () => void;
 }) {
   return (
     <>
@@ -512,9 +790,6 @@ function HandoffPanel({
         </div>
         <div style={S.row}>
           <OpenTerminalBtn input={input} />
-          <button style={S.btn(false)} onClick={onNewConversation}>
-            New conversation
-          </button>
         </div>
       </div>
       <PromptBox
@@ -533,55 +808,104 @@ function CheckingPanel() {
 
 // ─── root app ────────────────────────────────────────────────────────────────
 
+// States that show the composer (and thus the bottom bar)
+const SHOWS_BOTTOM_BAR = new Set<PanelStatus>([
+  'onboarding',
+  'ready',
+  'running',
+  'error',
+  'handoff-recommended',
+]);
+
 function App() {
   const [status, setStatus] = useState<PanelStatus>('checking');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorIds, setErrorIds] = useState<Set<string>>(new Set());
   const [input, setInput] = useState('');
 
+  // History / conversations
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [conversations, setConversations] = useState<ConversationMeta[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+
+  // Models
+  const [modelItems, setModelItems] = useState<ModelChoice[]>([]);
+  const [modelCurrent, setModelCurrent] = useState('');
+
+  // Usage
+  const [usage, setUsage] = useState<{ usedTokens: number; maxTokens: number } | null>(null);
+
   useEffect(() => {
     const onMsg = (e: MessageEvent<HostToWebview>) => {
       const m = e.data;
-      if (m.type === 'state') {
-        setStatus(m.status);
-      } else if (m.type === 'message') {
-        setMessages((prev) => [...prev, m.message]);
-      } else if (m.type === 'partial') {
-        setMessages((prev) =>
-          prev.map((x) => (x.id === m.id ? { ...x, text: m.text } : x)),
-        );
-      } else if (m.type === 'done') {
-        setMessages((prev) =>
-          prev.map((x) => (x.id === m.id ? { ...x, pending: false } : x)),
-        );
-      } else if (m.type === 'error') {
-        if (m.id) {
-          setMessages((prev) => {
-            const exists = prev.some((x) => x.id === m.id);
-            if (exists) {
-              return prev.map((x) => {
-                if (x.id !== m.id) return x;
-                const warningText = x.text
-                  ? `${x.text}\n⚠ ${m.text}`
-                  : `⚠ ${m.text}`;
-                return { ...x, pending: false, text: warningText };
-              });
-            }
+      switch (m.type) {
+        case 'state':
+          setStatus(m.status);
+          break;
+        case 'message':
+          setMessages((prev) => [...prev, m.message]);
+          break;
+        case 'partial':
+          setMessages((prev) =>
+            prev.map((x) => (x.id === m.id ? { ...x, text: m.text } : x)),
+          );
+          break;
+        case 'done':
+          setMessages((prev) =>
+            prev.map((x) => (x.id === m.id ? { ...x, pending: false } : x)),
+          );
+          break;
+        case 'error':
+          if (m.id) {
+            setMessages((prev) => {
+              const exists = prev.some((x) => x.id === m.id);
+              if (exists) {
+                return prev.map((x) => {
+                  if (x.id !== m.id) return x;
+                  const warningText = x.text
+                    ? `${x.text}\n⚠ ${m.text}`
+                    : `⚠ ${m.text}`;
+                  return { ...x, pending: false, text: warningText };
+                });
+              }
+              const newId = `e${Date.now()}`;
+              setErrorIds((ids) => new Set(ids).add(newId));
+              return [
+                ...prev,
+                { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
+              ];
+            });
+            setErrorIds((ids) => new Set(ids).add(m.id!));
+          } else {
             const newId = `e${Date.now()}`;
             setErrorIds((ids) => new Set(ids).add(newId));
-            return [
+            setMessages((prev) => [
               ...prev,
               { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
-            ];
-          });
-          setErrorIds((ids) => new Set(ids).add(m.id!));
-        } else {
-          const newId = `e${Date.now()}`;
-          setErrorIds((ids) => new Set(ids).add(newId));
-          setMessages((prev) => [
-            ...prev,
-            { id: newId, role: 'assistant' as const, text: `⚠ ${m.text}` },
-          ]);
+            ]);
+          }
+          break;
+        case 'hydrate':
+          setMessages(m.messages);
+          setErrorIds(new Set());
+          setActiveConversationId(m.conversationId ?? null);
+          setHistoryOpen(false);
+          break;
+        case 'conversations':
+          setConversations(m.items);
+          break;
+        case 'models':
+          setModelItems(m.items);
+          setModelCurrent(m.current);
+          break;
+        case 'usage':
+          setUsage({ usedTokens: m.usedTokens, maxTokens: m.maxTokens });
+          break;
+        default: {
+          // exhaustive guard — TypeScript will error if a variant is unhandled
+          const _: never = m;
+          void _;
+          break;
         }
       }
     };
@@ -592,10 +916,7 @@ function App() {
   const send = () => {
     const text = input.trim();
     if (!text) return;
-    setMessages((prev) => [
-      ...prev,
-      { id: `u${Date.now()}`, role: 'user' as const, text },
-    ]);
+    // The host posts the user message back — it owns the transcript mirror.
     vscodeApi.postMessage({ type: 'send', text });
     setInput('');
   };
@@ -603,68 +924,111 @@ function App() {
   const newConversation = () => {
     setMessages([]);
     setErrorIds(new Set());
+    setHistoryOpen(false);
     vscodeApi.postMessage({ type: 'newConversation' });
   };
 
-  let panel: React.ReactNode;
-  switch (status) {
-    case 'checking':
-      panel = <CheckingPanel />;
-      break;
-    case 'missing-cli':
-      panel = <MissingCLIPanel input={input} />;
-      break;
-    case 'onboarding':
-      panel = (
-        <OnboardingPanel input={input} setInput={setInput} onSend={send} />
-      );
-      break;
-    case 'ready':
-      panel = (
-        <ReadyPanel
-          messages={messages}
-          errorIds={errorIds}
-          input={input}
-          setInput={setInput}
-          onSend={send}
-          onNewConversation={newConversation}
-        />
-      );
-      break;
-    case 'running':
-      panel = <RunningPanel messages={messages} errorIds={errorIds} />;
-      break;
-    case 'error':
-      panel = (
-        <ErrorPanel
-          messages={messages}
-          errorIds={errorIds}
-          input={input}
-          setInput={setInput}
-          onSend={send}
-        />
-      );
-      break;
-    case 'handoff-recommended':
-      panel = (
-        <HandoffPanel
-          messages={messages}
-          errorIds={errorIds}
-          input={input}
-          setInput={setInput}
-          onSend={send}
-          onNewConversation={newConversation}
-        />
-      );
-      break;
-    default:
-      panel = <CheckingPanel />;
+  const openHistory = () => {
+    setHistoryOpen(true);
+    vscodeApi.postMessage({ type: 'listConversations' });
+  };
+
+  const toggleHistory = () => {
+    if (historyOpen) {
+      setHistoryOpen(false);
+    } else {
+      openHistory();
+    }
+  };
+
+  const selectConversation = (id: string) => {
+    vscodeApi.postMessage({ type: 'switchConversation', id });
+    setHistoryOpen(false);
+  };
+
+  // Main panel content (replaces main area when history is open)
+  let panelContent: React.ReactNode;
+
+  if (historyOpen) {
+    panelContent = (
+      <HistoryView
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        onBack={() => setHistoryOpen(false)}
+        onSelect={selectConversation}
+      />
+    );
+  } else {
+    switch (status) {
+      case 'checking':
+        panelContent = <CheckingPanel />;
+        break;
+      case 'missing-cli':
+        panelContent = <MissingCLIPanel input={input} />;
+        break;
+      case 'onboarding':
+        panelContent = (
+          <OnboardingPanel input={input} setInput={setInput} onSend={send} />
+        );
+        break;
+      case 'ready':
+        panelContent = (
+          <ReadyPanel
+            messages={messages}
+            errorIds={errorIds}
+            input={input}
+            setInput={setInput}
+            onSend={send}
+          />
+        );
+        break;
+      case 'running':
+        panelContent = <RunningPanel messages={messages} errorIds={errorIds} />;
+        break;
+      case 'error':
+        panelContent = (
+          <ErrorPanel
+            messages={messages}
+            errorIds={errorIds}
+            input={input}
+            setInput={setInput}
+            onSend={send}
+          />
+        );
+        break;
+      case 'handoff-recommended':
+        panelContent = (
+          <HandoffPanel
+            messages={messages}
+            errorIds={errorIds}
+            input={input}
+            setInput={setInput}
+            onSend={send}
+          />
+        );
+        break;
+      default: {
+        const _: never = status;
+        void _;
+        panelContent = <CheckingPanel />;
+      }
+    }
   }
+
+  const showBottomBar = SHOWS_BOTTOM_BAR.has(status);
 
   return (
     <main style={S.root}>
       <MarkdownStyles />
-      {panel}
+      <TopBar onHistory={toggleHistory} onNewChat={newConversation} />
+      <div style={S.scrollArea}>{panelContent}</div>
+      {showBottomBar && (
+        <BottomBar
+          modelItems={modelItems}
+          modelCurrent={modelCurrent}
+          usage={usage}
+        />
+      )}
     </main>
   );
 }
