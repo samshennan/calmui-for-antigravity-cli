@@ -46,11 +46,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       void this.handle(m);
     });
 
-    void this.refreshState();
-    this.post(this.modelsMessage());
-    this.post({ type: 'conversations', items: this.loadMetas() });
-    this.post({ type: 'hydrate', messages: [...this.messages], conversationId: this.conversationId });
-    this.post(this.usageMessage());
+    // The boot bundle is sent when the webview posts 'webviewReady' —
+    // posting here would race the script load and the messages get dropped.
   }
 
   private async refreshState(): Promise<void> {
@@ -67,6 +64,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private async handle(m: WebviewToHost): Promise<void> {
     switch (m.type) {
+      case 'webviewReady':
+        this.post(this.modelsMessage());
+        this.post({ type: 'conversations', items: this.loadMetas() });
+        this.post({
+          type: 'hydrate',
+          messages: [...this.messages],
+          conversationId: this.conversationId,
+        });
+        this.post(this.usageMessage());
+        void this.refreshState();
+        break;
       case 'send': {
         const assistantId = `a${++this.turn}`;
         const userId = `u${this.turn}`;
@@ -111,6 +119,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             this.messages.push(errMsg);
             this.post({ type: 'error', id: assistantId, text: errText });
             this.post({ type: 'state', status: 'handoff-recommended' });
+            this.post(this.usageMessage());
             // Don't persist: the assistant side was an error with no real content.
             break;
           }
@@ -125,8 +134,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           if (this.conversationId) {
             this.persistConversation(m.text);
             this.post({ type: 'conversations', items: this.loadMetas() });
-            this.post(this.usageMessage());
           }
+          this.post(this.usageMessage());
         } catch (err) {
           const raw = err instanceof Error ? err.message : String(err);
           const isAlreadyFriendly =
@@ -138,6 +147,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           this.messages.push(errMsg);
           this.post({ type: 'error', id: assistantId, text });
           this.post({ type: 'state', status: 'handoff-recommended' });
+          this.post(this.usageMessage());
         }
         break;
       }

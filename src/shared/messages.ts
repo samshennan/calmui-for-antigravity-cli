@@ -45,6 +45,10 @@ export type HostToWebview =
 
 /** webview -> host */
 export type WebviewToHost =
+  /** Sent once the webview script has attached its message listener.
+   *  The host replies with the boot bundle (models/conversations/hydrate/usage)
+   *  — posting earlier would race the script load and get dropped. */
+  | { type: 'webviewReady' }
   | { type: 'send'; text: string }
   | { type: 'cancel' }
   | { type: 'newConversation' }
