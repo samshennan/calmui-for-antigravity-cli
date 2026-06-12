@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-06-12
+
+### Changed
+- Redesigned panel layout: composer is now pinned to the bottom with a send/stop button, model switcher, settings cog, terminal handoff, and context meter on one rail
+- Empty state shows a centered CalmUI logo with prompt suggestions
+
+### Fixed
+- Model switcher and context meter no longer appear empty on panel load (webview boot race — the host now waits for the webview before sending its state)
+- Context meter updates after every turn, including failed ones
+- Settings icon is now a recognizable cog
+
 ## [0.2.0] - 2026-06-12
 
 ### Added
