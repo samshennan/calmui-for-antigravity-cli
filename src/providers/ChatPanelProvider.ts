@@ -12,6 +12,8 @@ import type { WebviewToHost, HostToWebview } from '../shared/messages';
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private turn = 0;
+  /** The agy conversation ID for the current thread; undefined = fresh. */
+  private conversationId: string | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -54,19 +56,39 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           message: { id, role: 'assistant', text: '', pending: true },
         });
         this.post({ type: 'state', status: 'running' });
+        // Build options from VS Code settings + current conversation state.
+        const cfg = vscode.workspace.getConfiguration('calmui-agy');
+        const model = cfg.get<string>('model', '');
+        const opts = {
+          ...(model ? { model } : {}),
+          printTimeoutSeconds: cfg.get<number>('printTimeoutSeconds', 120),
+          ...(cfg.get<string[]>('includeDirectories', []).length
+            ? { includeDirectories: cfg.get<string[]>('includeDirectories', []) }
+            : {}),
+          cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          conversationId: this.conversationId,
+        };
         try {
-          const res = await this.transport.sendPrompt(m.text, {}, (clean) =>
+          const res = await this.transport.sendPrompt(m.text, opts, (clean) =>
             this.post({ type: 'partial', id, text: clean }),
           );
+          // Persist a new conversation ID; keep the existing one if none returned.
+          if (res.conversationId) {
+            this.conversationId = res.conversationId;
+          }
           this.post({ type: 'partial', id, text: res.text });
           this.post({ type: 'done', id });
           this.post({ type: 'state', status: 'ready' });
         } catch (err) {
-          this.post({
-            type: 'error',
-            id,
-            text: err instanceof Error ? err.message : String(err),
-          });
+          const raw = err instanceof Error ? err.message : String(err);
+          // Timeout and node-pty-missing messages are already actionable; anything
+          // else gets a short human lead-in so users aren't staring at a raw stack.
+          const isAlreadyFriendly =
+            raw.startsWith('CalmUI:') || raw.includes('node-pty');
+          const text = isAlreadyFriendly
+            ? raw
+            : `agy failed: ${raw}. Run Diagnostics for details, or continue in the terminal.`;
+          this.post({ type: 'error', id, text });
           this.post({ type: 'state', status: 'handoff-recommended' });
         }
         break;
@@ -79,6 +101,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.transport.openInteractiveTerminal(m.prompt);
         break;
       case 'newConversation':
+        // Clear the thread so the next send starts a fresh agy conversation.
+        this.conversationId = undefined;
         void this.refreshState();
         break;
       case 'runDiagnostics':

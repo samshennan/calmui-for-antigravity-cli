@@ -121,6 +121,10 @@ export class AgyProcess implements AgyTransport {
       bin = process.env.ComSpec ?? 'cmd.exe';
     }
 
+    // Record the current log size so we only scan the region appended during
+    // this spawn — avoids returning an old conversation ID from a previous run.
+    const logOffset = this.logSize();
+
     return await new Promise<AgyResult>((resolve, reject) => {
       let raw = '';
       const proc = pty.spawn(bin, spawnArgs, {
@@ -137,7 +141,7 @@ export class AgyProcess implements AgyTransport {
       });
       proc.onExit(({ exitCode }: { exitCode: number }) => {
         this.ptyProc = null;
-        const conversationId = this.parseConversationId();
+        const conversationId = this.parseConversationId(logOffset);
         resolve({
           text: normalizeDrip(raw),
           conversationId,
@@ -145,14 +149,20 @@ export class AgyProcess implements AgyTransport {
         });
       });
       // Defensive: a hard ceiling above --print-timeout.
-      const ceilingMs = (options.printTimeoutSeconds ?? 120) * 1000 + 15000;
+      const effectiveTimeoutSec = options.printTimeoutSeconds ?? 120;
+      const ceilingMs = effectiveTimeoutSec * 1000 + 15000;
       const t = setTimeout(() => {
         try {
           proc.kill();
         } catch {
           /* noop */
         }
-        reject(new Error('CalmUI: agy prompt timed out.'));
+        reject(
+          new Error(
+            `CalmUI: agy timed out after ${effectiveTimeoutSec}s. ` +
+              `Raise the 'calmui-agy.printTimeoutSeconds' setting, or continue in the terminal.`,
+          ),
+        );
       }, ceilingMs);
       proc.onExit(() => clearTimeout(t));
     });
@@ -174,7 +184,27 @@ export class AgyProcess implements AgyTransport {
     this.cancel();
   }
 
-  private parseConversationId(): string | undefined {
+  /** Return the current byte length of the cli.log file, or 0 if absent. */
+  private logSize(): number {
+    try {
+      const logPath = path.join(
+        os.homedir(),
+        '.gemini',
+        'antigravity-cli',
+        'cli.log',
+      );
+      return fs.existsSync(logPath) ? fs.statSync(logPath).size : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Parse the LAST "Created conversation <id>" line appended to cli.log after
+   * the snapshot at `offsetBytes`. Returns undefined if no new line exists
+   * (e.g. continuing an existing conversation via --conversation).
+   */
+  private parseConversationId(offsetBytes: number): string | undefined {
     try {
       const logPath = path.join(
         os.homedir(),
@@ -185,9 +215,28 @@ export class AgyProcess implements AgyTransport {
       if (!fs.existsSync(logPath)) {
         return undefined;
       }
-      const log = fs.readFileSync(logPath, 'utf-8');
-      const match = /Created conversation ([a-f0-9\-]+)/i.exec(log);
-      return match ? match[1] : undefined;
+      const stat = fs.statSync(logPath);
+      const appendedBytes = stat.size - offsetBytes;
+      if (appendedBytes <= 0) {
+        return undefined;
+      }
+      // Read only the newly-appended region.
+      const buf = Buffer.alloc(appendedBytes);
+      const fd = fs.openSync(logPath, 'r');
+      try {
+        fs.readSync(fd, buf, 0, appendedBytes, offsetBytes);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const region = buf.toString('utf-8');
+      // Collect all matches and return the last one.
+      const re = /Created conversation ([a-f0-9-]+)/gi;
+      let last: string | undefined;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(region)) !== null) {
+        last = m[1];
+      }
+      return last;
     } catch {
       return undefined;
     }
