@@ -5,6 +5,10 @@ import type { ChatMessage, ConversationMeta, HostToWebview, ModelChoice, Webview
 const CONV_STORE_KEY = 'calmui.conversations';
 const MAX_CONVERSATIONS = 50;
 const MAX_CONTEXT_TOKENS = 1048576;
+const PERMISSION_HELP =
+  'CalmUI does not ask for file-edit or command-run permissions inside the side panel. ' +
+  'The panel is a quick-ask surface over `agy -p`: it can answer questions, but it does not drive agy approval cards, does not edit files, and never passes `--dangerously-skip-permissions`.\n\n' +
+  'When you need edits, commands, or agy approval prompts, use the terminal handoff button. It opens an Antigravity terminal with `agy` prefilled; you press Enter there, then agy owns the normal terminal approval flow.';
 
 const MODEL_CHOICES: ModelChoice[] = [
   { label: 'Default (agy)', value: '' },
@@ -28,6 +32,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private conversationId: string | undefined;
   /** Host-side mirror of the active transcript. */
   private messages: ChatMessage[] = [];
+  private modelChoices: ModelChoice[] = MODEL_CHOICES;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -66,6 +71,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     switch (m.type) {
       case 'webviewReady':
         this.post(this.modelsMessage());
+        void this.refreshModels();
         this.post({ type: 'conversations', items: this.loadMetas() });
         this.post({
           type: 'hydrate',
@@ -83,6 +89,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         const userMsg: ChatMessage = { id: userId, role: 'user', text: m.text };
         this.messages.push(userMsg);
         this.post({ type: 'message', message: userMsg });
+
+        if (this.isPermissionHelpQuestion(m.text)) {
+          const assistantMsg: ChatMessage = {
+            id: assistantId,
+            role: 'assistant',
+            text: PERMISSION_HELP,
+          };
+          this.messages.push(assistantMsg);
+          this.post({ type: 'message', message: assistantMsg });
+          this.post({ type: 'state', status: 'handoff-recommended' });
+          this.post(this.usageMessage());
+          break;
+        }
 
         this.post({
           type: 'message',
@@ -243,7 +262,34 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private modelsMessage(): HostToWebview & { type: 'models' } {
     const current = vscode.workspace.getConfiguration('calmui-agy').get<string>('model', '') ?? '';
-    return { type: 'models', items: MODEL_CHOICES, current };
+    return { type: 'models', items: this.modelChoices, current };
+  }
+
+  private async refreshModels(): Promise<void> {
+    const models = await this.transport.listModels().catch(() => []);
+    if (models.length === 0) return;
+    this.modelChoices = [
+      { label: 'Default (agy)', value: '' },
+      ...models.map((m) => ({ label: m.label, value: m.value })),
+    ];
+    this.post(this.modelsMessage());
+  }
+
+  private isPermissionHelpQuestion(text: string): boolean {
+    const q = text.toLowerCase();
+    const asksAboutPermission =
+      q.includes('permission') ||
+      q.includes('approve') ||
+      q.includes('approval') ||
+      q.includes('accept edit') ||
+      q.includes('file edit') ||
+      q.includes('take actions on my files');
+    const asksHow =
+      q.includes('how') ||
+      q.includes('what') ||
+      q.includes('does agy') ||
+      q.includes('do you ask');
+    return asksAboutPermission && asksHow;
   }
 
   // ---------------------------------------------------------------------------

@@ -342,6 +342,13 @@ button, textarea, select {
   font-size: 11px;
   white-space: nowrap;
 }
+.usage.warn {
+  color: var(--vscode-charts-yellow, #cca700);
+}
+.usage.danger {
+  color: var(--vscode-errorForeground, #f48771);
+  font-weight: 600;
+}
 .spacer {
   flex: 1 1 auto;
   min-width: 4px;
@@ -443,15 +450,13 @@ function NewChatIcon() {
   );
 }
 
-function GearIcon() {
-  // Codicon-style cog: toothed outer ring + center hole (spokes-only reads as a sun).
+function SlidersIcon() {
   return (
-    <svg width='16' height='16' viewBox='0 0 16 16' fill='currentColor'>
-      <path
-        fillRule='evenodd'
-        d='M9.1 1.5 9.4 3a5.2 5.2 0 0 1 1.5.87l1.46-.5.95 1.64-1.16 1.06a5.27 5.27 0 0 1 0 1.74l1.16 1.06-.95 1.64-1.46-.5a5.2 5.2 0 0 1-1.5.87l-.3 1.52H7.2L6.9 12.9a5.2 5.2 0 0 1-1.5-.87l-1.46.5L3 10.9l1.16-1.06a5.27 5.27 0 0 1 0-1.74L3 7.04l.95-1.64 1.46.5A5.2 5.2 0 0 1 6.9 5l.3-1.51h1.9ZM8 10.3a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z'
-        transform='translate(-0.1 0.05)'
-      />
+    <svg width='17' height='17' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.65' strokeLinecap='round' strokeLinejoin='round'>
+      <path d='M2.5 5h3.1M8.8 5h4.7' />
+      <circle cx='7.2' cy='5' r='1.45' />
+      <path d='M2.5 11h6.1M11.8 11h1.7' />
+      <circle cx='10.2' cy='11' r='1.45' />
     </svg>
   );
 }
@@ -538,6 +543,13 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function usageClass(usage: { usedTokens: number; maxTokens: number }): string {
+  const ratio = usage.maxTokens > 0 ? usage.usedTokens / usage.maxTokens : 0;
+  if (ratio >= 0.9) return 'usage danger';
+  if (ratio >= 0.7) return 'usage warn';
+  return 'usage';
+}
+
 function Composer({
   input,
   setInput,
@@ -584,7 +596,7 @@ function Composer({
           placeholder={running ? 'agy is responding...' : 'Ask agy a quick question...'}
         />
         <div className='composer-rail'>
-          <IconButton title='Open in Antigravity terminal' onClick={() => vscodeApi.postMessage({ type: 'openTerminal', prompt: input.trim() || undefined })}>
+          <IconButton title='Open prefilled Antigravity terminal' onClick={() => vscodeApi.postMessage({ type: 'openTerminal', prompt: input.trim() || undefined })}>
             <TerminalIcon />
           </IconButton>
           <select
@@ -602,16 +614,16 @@ function Composer({
             ))}
           </select>
           <IconButton title='Settings' onClick={() => vscodeApi.postMessage({ type: 'openSettings' })}>
-            <GearIcon />
+            <SlidersIcon />
           </IconButton>
           <span className='spacer' />
           {usage !== null && (
-            <span className='usage' title='Estimated context usage'>
+            <span className={usageClass(usage)} title='Estimated context usage'>
               {formatTokens(usage.usedTokens)} / {formatTokens(usage.maxTokens)}
             </span>
           )}
           {running ? (
-            <IconButton title='Stop — cancel this response' onClick={() => vscodeApi.postMessage({ type: 'cancel' })} primary>
+            <IconButton title='Stop - cancel this response' onClick={() => vscodeApi.postMessage({ type: 'cancel' })} primary>
               <StopIcon />
             </IconButton>
           ) : (

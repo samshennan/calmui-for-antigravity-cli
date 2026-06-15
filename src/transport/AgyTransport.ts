@@ -50,6 +50,11 @@ export interface AgyResult {
   exitCode: number | null;
 }
 
+export interface AgyModel {
+  label: string;
+  value: string;
+}
+
 export interface AgyTransport extends vscode.Disposable {
   /** Detect the binary, read --version, optionally run a probe prompt. */
   checkAvailability(probe: boolean): Promise<AgyAvailability>;
@@ -70,6 +75,9 @@ export interface AgyTransport extends vscode.Disposable {
 
   /** Cancel the in-flight prompt (kills the pty), if any. */
   cancel(): void;
+
+  /** List models reported by `agy models`; return [] if unavailable. */
+  listModels(): Promise<AgyModel[]>;
 
   /** Open an Antigravity terminal, optionally prefilled with `prompt`. */
   openInteractiveTerminal(prompt?: string): void;

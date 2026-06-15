@@ -7,6 +7,7 @@ import { normalizeDrip } from './ansi';
 import type {
   AgyTransport,
   AgyAvailability,
+  AgyModel,
   AgySendOptions,
   AgyResult,
 } from './AgyTransport';
@@ -173,6 +174,17 @@ export class AgyProcess implements AgyTransport {
     this.ptyProc = null;
   }
 
+  async listModels(): Promise<AgyModel[]> {
+    const output =
+      (await this.runPtyCapture(['models'], 10000).catch(() => '')) ||
+      (await this.runCapture([this.agyPath, 'models']).catch(() => ''));
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((label) => ({ label, value: label }));
+  }
+
   openInteractiveTerminal(prompt?: string): void {
     const term = vscode.window.createTerminal({ name: 'Antigravity (agy)' });
     term.show();
@@ -254,6 +266,56 @@ export class AgyProcess implements AgyTransport {
       p.on('close', (code) =>
         code === 0 ? resolve(out) : reject(new Error(err || `exit ${code}`)),
       );
+    });
+  }
+
+  private async runPtyCapture(args: string[], timeoutMs: number): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pty: any;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      pty = require('node-pty');
+    } catch {
+      return '';
+    }
+
+    let bin = await this.resolveBinary();
+    let spawnArgs = args;
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
+      spawnArgs = ['/c', bin, ...args];
+      bin = process.env.ComSpec ?? 'cmd.exe';
+    }
+
+    return await new Promise<string>((resolve) => {
+      let raw = '';
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(t);
+        resolve(normalizeDrip(raw));
+      };
+      const proc = pty.spawn(bin, spawnArgs, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        cwd: process.cwd(),
+        env: process.env,
+      });
+      const t = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          /* noop */
+        }
+        finish();
+      }, timeoutMs);
+      proc.onData((d: string) => {
+        raw += d;
+      });
+      proc.onExit(() => {
+        finish();
+      });
     });
   }
 }
