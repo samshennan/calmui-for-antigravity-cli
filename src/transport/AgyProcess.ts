@@ -126,8 +126,15 @@ export class AgyProcess implements AgyTransport {
     // this spawn — avoids returning an old conversation ID from a previous run.
     const logOffset = this.logSize();
 
+    // Defensive: a hard ceiling above --print-timeout.
+    const effectiveTimeoutSec = options.printTimeoutSeconds ?? 120;
+    const ceilingMs = effectiveTimeoutSec * 1000 + 15000;
+
     return await new Promise<AgyResult>((resolve, reject) => {
       let raw = '';
+      // The exit and timeout paths can both fire (a slow kill, a delayed exit).
+      // Settle exactly once and tear down regardless of which wins.
+      let settled = false;
       const proc = pty.spawn(bin, spawnArgs, {
         name: 'xterm-256color',
         cols: 120,
@@ -136,11 +143,30 @@ export class AgyProcess implements AgyTransport {
         env: process.env,
       });
       this.ptyProc = proc;
+      const t = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          proc.kill();
+        } catch {
+          /* noop */
+        }
+        this.ptyProc = null;
+        reject(
+          new Error(
+            `CalmUI: agy timed out after ${effectiveTimeoutSec}s. ` +
+              `Raise the 'calmui-agy.printTimeoutSeconds' setting, or continue in the terminal.`,
+          ),
+        );
+      }, ceilingMs);
       proc.onData((d: string) => {
         raw += d;
         if (onPartial) onPartial(normalizeDrip(raw));
       });
       proc.onExit(({ exitCode }: { exitCode: number }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(t);
         this.ptyProc = null;
         const conversationId = this.parseConversationId(logOffset);
         resolve({
@@ -149,23 +175,6 @@ export class AgyProcess implements AgyTransport {
           exitCode,
         });
       });
-      // Defensive: a hard ceiling above --print-timeout.
-      const effectiveTimeoutSec = options.printTimeoutSeconds ?? 120;
-      const ceilingMs = effectiveTimeoutSec * 1000 + 15000;
-      const t = setTimeout(() => {
-        try {
-          proc.kill();
-        } catch {
-          /* noop */
-        }
-        reject(
-          new Error(
-            `CalmUI: agy timed out after ${effectiveTimeoutSec}s. ` +
-              `Raise the 'calmui-agy.printTimeoutSeconds' setting, or continue in the terminal.`,
-          ),
-        );
-      }, ceilingMs);
-      proc.onExit(() => clearTimeout(t));
     });
   }
 
@@ -212,11 +221,16 @@ export class AgyProcess implements AgyTransport {
   }
 
   /**
-   * Parse the LAST "Created conversation <id>" line appended to cli.log after
-   * the snapshot at `offsetBytes`. Returns undefined if no new line exists
-   * (e.g. continuing an existing conversation via --conversation).
+   * Parse the "Created conversation <id>" line appended to cli.log after the
+   * snapshot at `offsetBytes`. Returns undefined if no new line exists (e.g.
+   * continuing an existing conversation via --conversation) OR if more than one
+   * distinct id appears in the region — a second agy process writing to the same
+   * global log concurrently would otherwise bind us to the wrong conversation.
    */
   private parseConversationId(offsetBytes: number): string | undefined {
+    // Cap the scanned region so a large concurrent append can't force an
+    // unbounded allocation in the extension host.
+    const MAX_SCAN_BYTES = 64 * 1024;
     try {
       const logPath = path.join(
         os.homedir(),
@@ -228,26 +242,35 @@ export class AgyProcess implements AgyTransport {
         return undefined;
       }
       const stat = fs.statSync(logPath);
-      const appendedBytes = stat.size - offsetBytes;
-      if (appendedBytes <= 0) {
+      let start = offsetBytes;
+      let length = stat.size - offsetBytes;
+      if (length <= 0) {
         return undefined;
       }
-      // Read only the newly-appended region.
-      const buf = Buffer.alloc(appendedBytes);
+      if (length > MAX_SCAN_BYTES) {
+        // Scan the tail of the appended range; the id line is logged near the
+        // start of a run, so this trades multi-turn on huge logs for safety.
+        start = stat.size - MAX_SCAN_BYTES;
+        length = MAX_SCAN_BYTES;
+      }
+      const buf = Buffer.alloc(length);
       const fd = fs.openSync(logPath, 'r');
       try {
-        fs.readSync(fd, buf, 0, appendedBytes, offsetBytes);
+        fs.readSync(fd, buf, 0, length, start);
       } finally {
         fs.closeSync(fd);
       }
       const region = buf.toString('utf-8');
-      // Collect all matches and return the last one.
       const re = /Created conversation ([a-f0-9-]+)/gi;
+      const ids = new Set<string>();
       let last: string | undefined;
       let m: RegExpExecArray | null;
       while ((m = re.exec(region)) !== null) {
+        ids.add(m[1]);
         last = m[1];
       }
+      if (ids.size === 0) return undefined;
+      if (ids.size > 1) return undefined; // ambiguous — don't bind the wrong id
       return last;
     } catch {
       return undefined;

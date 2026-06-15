@@ -32,6 +32,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private conversationId: string | undefined;
   /** Host-side mirror of the active transcript. */
   private messages: ChatMessage[] = [];
+  /** The turn number of the in-flight prompt, or null when idle. Used as a
+   *  single-flight guard and to discard a cancelled/superseded completion. */
+  private runningTurn: number | null = null;
   private modelChoices: ModelChoice[] = MODEL_CHOICES;
 
   constructor(
@@ -60,6 +63,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const a = await this.transport.checkAvailability(false);
     if (!a.found) {
       this.post({ type: 'state', status: 'missing-cli', detail: a.detail });
+    } else if (this.runningTurn !== null) {
+      // A prompt is still in flight (e.g. the webview reloaded mid-stream) —
+      // keep the running UI so the eventual completion lands correctly.
+      this.post({ type: 'state', status: 'running' });
     } else if (this.messages.length === 0) {
       this.post({ type: 'state', status: 'onboarding', detail: a.version });
     } else {
@@ -82,8 +89,16 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         void this.refreshState();
         break;
       case 'send': {
+        // Single-flight: ignore a send while one is already running. The webview
+        // guards this too, but a reloaded webview or a race could double-send,
+        // which would orphan the first PTY and corrupt the transcript.
+        if (this.runningTurn !== null) {
+          break;
+        }
+
         const assistantId = `a${++this.turn}`;
         const userId = `u${this.turn}`;
+        const myTurn = this.turn;
 
         // Push user message into host mirror immediately.
         const userMsg: ChatMessage = { id: userId, role: 'user', text: m.text };
@@ -103,10 +118,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           break;
         }
 
-        this.post({
-          type: 'message',
-          message: { id: assistantId, role: 'assistant', text: '', pending: true },
-        });
+        // Store the pending placeholder in the mirror so a mid-stream reload
+        // (webviewReady) rehydrates it and the eventual completion lands by id.
+        const placeholder: ChatMessage = {
+          id: assistantId,
+          role: 'assistant',
+          text: '',
+          pending: true,
+        };
+        this.messages.push(placeholder);
+        this.post({ type: 'message', message: { ...placeholder } });
+        this.runningTurn = myTurn;
         this.post({ type: 'state', status: 'running' });
 
         const cfg = vscode.workspace.getConfiguration('calmui-agy');
@@ -122,9 +144,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         };
 
         try {
-          const res = await this.transport.sendPrompt(m.text, opts, (clean) =>
-            this.post({ type: 'partial', id: assistantId, text: clean }),
-          );
+          const res = await this.transport.sendPrompt(m.text, opts, (clean) => {
+            if (this.runningTurn === myTurn) {
+              this.post({ type: 'partial', id: assistantId, text: clean });
+            }
+          });
+
+          // The turn was cancelled or superseded while awaiting — discard it.
+          // cancel() has already settled the placeholder and posted state.
+          if (this.runningTurn !== myTurn) {
+            break;
+          }
+          this.runningTurn = null;
 
           if (res.conversationId) {
             this.conversationId = res.conversationId;
@@ -134,8 +165,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           if (res.text.trim() === '') {
             const errText =
               "agy returned an empty response. If you selected a model, it may be unavailable — try 'Default (agy)'.";
-            const errMsg: ChatMessage = { id: assistantId, role: 'assistant', text: errText };
-            this.messages.push(errMsg);
+            placeholder.text = errText;
+            placeholder.pending = false;
             this.post({ type: 'error', id: assistantId, text: errText });
             this.post({ type: 'state', status: 'handoff-recommended' });
             this.post(this.usageMessage());
@@ -143,37 +174,58 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             break;
           }
 
-          const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', text: res.text };
-          this.messages.push(assistantMsg);
+          placeholder.text = res.text;
+          placeholder.pending = false;
 
           this.post({ type: 'partial', id: assistantId, text: res.text });
           this.post({ type: 'done', id: assistantId });
           this.post({ type: 'state', status: 'ready' });
 
           if (this.conversationId) {
-            this.persistConversation(m.text);
+            await this.persistConversation(m.text);
             this.post({ type: 'conversations', items: this.loadMetas() });
           }
           this.post(this.usageMessage());
         } catch (err) {
+          // Ignore the failure if the turn was cancelled/superseded mid-flight.
+          if (this.runningTurn !== myTurn) {
+            break;
+          }
+          this.runningTurn = null;
           const raw = err instanceof Error ? err.message : String(err);
           const isAlreadyFriendly =
             raw.startsWith('CalmUI:') || raw.includes('node-pty');
           const text = isAlreadyFriendly
             ? raw
             : `agy failed: ${raw}. Run Diagnostics for details, or continue in the terminal.`;
-          const errMsg: ChatMessage = { id: assistantId, role: 'assistant', text };
-          this.messages.push(errMsg);
+          placeholder.text = text;
+          placeholder.pending = false;
           this.post({ type: 'error', id: assistantId, text });
           this.post({ type: 'state', status: 'handoff-recommended' });
           this.post(this.usageMessage());
         }
         break;
       }
-      case 'cancel':
+      case 'cancel': {
         this.transport.cancel();
+        // Settle the in-flight placeholder so the spinner stops; the awaited
+        // sendPrompt will resolve later but is discarded (runningTurn cleared).
+        if (this.runningTurn !== null) {
+          const ph = [...this.messages]
+            .reverse()
+            .find((x) => x.role === 'assistant' && x.pending);
+          if (ph) {
+            ph.text = ph.text || '_Response cancelled._';
+            ph.pending = false;
+            this.post({ type: 'partial', id: ph.id, text: ph.text });
+            this.post({ type: 'done', id: ph.id });
+          }
+          this.runningTurn = null;
+        }
         this.post({ type: 'state', status: 'ready' });
+        this.post(this.usageMessage());
         break;
+      }
       case 'openTerminal':
         this.transport.openInteractiveTerminal(m.prompt);
         break;
@@ -225,19 +277,29 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   // ---------------------------------------------------------------------------
 
   private loadAll(): StoredConversation[] {
-    return this.context.workspaceState.get<StoredConversation[]>(CONV_STORE_KEY, []);
+    const raw = this.context.workspaceState.get<StoredConversation[]>(CONV_STORE_KEY, []);
+    // Dedupe by id (corrupted/legacy state could hold duplicates), keeping the
+    // newest entry, and return most-recent-first.
+    const byId = new Map<string, StoredConversation>();
+    for (const c of raw) {
+      if (!c || typeof c.id !== 'string') continue;
+      const prev = byId.get(c.id);
+      if (!prev || c.updatedAt > prev.updatedAt) byId.set(c.id, c);
+    }
+    return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   private loadMetas(): ConversationMeta[] {
     return this.loadAll().map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
   }
 
-  private persistConversation(firstPrompt: string): void {
+  private async persistConversation(firstPrompt: string): Promise<void> {
     if (!this.conversationId) return;
 
-    const all = this.loadAll().filter((c) => c.id !== this.conversationId);
-    const existing = this.loadAll().find((c) => c.id === this.conversationId);
-    const title = existing?.title ?? firstPrompt.slice(0, 60);
+    const all = this.loadAll();
+    const existing = all.find((c) => c.id === this.conversationId);
+    const rest = all.filter((c) => c.id !== this.conversationId);
+    const title = existing?.title ?? (firstPrompt.slice(0, 60) || 'Untitled');
 
     const updated: StoredConversation = {
       id: this.conversationId,
@@ -247,8 +309,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     };
 
     // Most-recent-first, capped at MAX_CONVERSATIONS.
-    const next = [updated, ...all].slice(0, MAX_CONVERSATIONS);
-    void this.context.workspaceState.update(CONV_STORE_KEY, next);
+    const next = [updated, ...rest].slice(0, MAX_CONVERSATIONS);
+    try {
+      await this.context.workspaceState.update(CONV_STORE_KEY, next);
+    } catch (e) {
+      console.error('CalmUI: failed to persist conversation history', e);
+    }
   }
 
   // ---------------------------------------------------------------------------

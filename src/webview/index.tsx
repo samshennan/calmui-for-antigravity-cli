@@ -9,6 +9,24 @@ const vscodeApi = acquireVsCodeApi();
 
 marked.setOptions({ breaks: true, gfm: true });
 
+// Defence in depth: assistant text is HTML-escaped before parsing (blocks raw
+// HTML), but marked still turns `[x](javascript:...)` into a live href. Neutralize
+// any link/image URL that is not an http(s)/mailto scheme so model output can't
+// smuggle a javascript:/data: URL through dangerouslySetInnerHTML.
+function isSafeUrl(url: string): boolean {
+  const t = url.trim().toLowerCase();
+  return t.startsWith('http://') || t.startsWith('https://') || t.startsWith('mailto:');
+}
+
+marked.use({
+  walkTokens(token) {
+    const t = token as { type: string; href?: string };
+    if ((t.type === 'link' || t.type === 'image') && typeof t.href === 'string' && !isSafeUrl(t.href)) {
+      t.href = '#';
+    }
+  },
+});
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')

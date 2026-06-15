@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Model switcher and context meter no longer appear empty on panel load (webview boot race — the host now waits for the webview before sending its state)
 - Context meter updates after every turn, including failed ones
 - Settings icon is now a recognizable cog
+- Security: links in agy responses are restricted to http(s)/mailto, so a model can't smuggle a `javascript:`/`data:` URL into the panel
+- Cancelling a prompt now reliably stops the turn and discards its late result instead of posting it as complete
+- A second prompt can no longer start while one is in flight (single-flight guard), and an in-flight prompt survives the panel being hidden and reshown
+- Conversation-id detection ignores ambiguous matches when another agy process writes to the shared log, and caps how much log it scans
+- Conversation history writes are awaited and de-duplicated on load
 
 ## [0.2.0] - 2026-06-12
 
