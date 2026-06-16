@@ -6,3 +6,5 @@ out/
 *.log
 # local spike scratch
 /tmp/
+# development-process docs live outside the public repo (C:\AI_LAB\CUI4AGYCLI)
+.planning/

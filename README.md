@@ -195,17 +195,11 @@ Later:
 ## Development
 
 ```bash
-npm install
-npm run build
-npm test
-npm run package
+npm install   # install dependencies
+npm run build # bundle the extension + webview
+npm test      # run the unit tests
+npm run package # build the .vsix
 ```
-
-Key docs:
-
-- `ARCHITECTURE.md` - module map and transport contract
-- `BUILD-PLAN.md` - phased rollout and acceptance criteria
-- `TRANSPORT-PROVEN.md` - node-pty transport proof
 
 ## License
 
