@@ -12,21 +12,95 @@ import type {
   AgyResult,
 } from './AgyTransport';
 
+// ---------------------------------------------------------------------------
+// Pure helpers (unit-tested in AgyProcess.test.ts) — kept free of vscode/pty so
+// the argv/parse/quoting logic is verifiable without spawning a process.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the argv passed to `agy` for a single quick-ask prompt.
+ *
+ * Multi-turn: an explicit `conversationId` (--conversation <id>) is unambiguous
+ * and wins. Otherwise, when this panel thread already has prior turns but we
+ * could not capture an id, fall back to `-c` (continue most-recent) so the
+ * thread keeps context instead of silently resetting. A fresh thread gets `-p`
+ * only.
+ */
+export function buildAgyArgs(prompt: string, options: AgySendOptions): string[] {
+  const args = ['-p', prompt];
+  if (options.model) args.push('--model', options.model);
+  if (options.printTimeoutSeconds)
+    args.push('--print-timeout', `${options.printTimeoutSeconds}s`);
+  if (options.conversationId) {
+    args.push('--conversation', options.conversationId);
+  } else if (options.continue) {
+    args.push('-c');
+  }
+  for (const dir of options.includeDirectories ?? []) args.push('--add-dir', dir);
+  return args;
+}
+
+/**
+ * Parse `agy models` output into pickable models. Defensive: agy may print
+ * headers, descriptions, blank lines, or ANSI-decorated rows. We keep only the
+ * leading model-id token of each line (letters/digits/._-), which is what
+ * `--model` actually accepts — never the whole descriptive line. Returns a
+ * de-duped list; empty when nothing model-shaped is found.
+ */
+export function parseModelsOutput(raw: string): AgyModel[] {
+  const seen = new Set<string>();
+  const out: AgyModel[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const m = /^([A-Za-z][\w.-]*)/.exec(trimmed);
+    if (!m) continue;
+    const id = m[1];
+    // Skip obvious non-model header words.
+    if (/^(models?|available|name|id|usage|error)$/i.test(id)) continue;
+    // A real model id looks like "gemini-3-pro" / "gemini-3.5-flash" — require
+    // at least one digit or a hyphen so we don't accept prose like "The".
+    if (!/[\d-]/.test(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ label: id, value: id });
+  }
+  return out;
+}
+
+/**
+ * Quote a single argument for a Windows `cmd.exe /c` command line. Wraps in
+ * double quotes and escapes the characters cmd would otherwise interpret. Only
+ * used on the rare `.cmd`/`.bat` shim path (the real `agy.exe` needs none of
+ * this). Pure + tested.
+ */
+export function quoteForCmd(arg: string): string {
+  // Escape cmd metacharacters, then wrap. `%` is doubled to defeat env
+  // expansion; embedded quotes are backslash-escaped for the program, and cmd
+  // metacharacters are caret-escaped as belt-and-suspenders.
+  const escaped = arg
+    .replace(/%/g, '%%')
+    .replace(/"/g, '\\"')
+    .replace(/([&|<>()^])/g, '^$1');
+  return `"${escaped}"`;
+}
+
 /**
  * node-pty-backed implementation of AgyTransport.
  *
- * STATUS: Phase 0.5 complete. `checkAvailability` with auth probe and `sendPrompt`
- * with full pty wiring are now implemented. node-pty is a dependency; tested to
- * load without ABI errors on Windows.
- *
- * See 2026-06-11-build-plan.md Phase 0.5 and 2026-06-11-spike-results.md.
+ * Transport = node-pty around `agy -p` (see .planning spike results): `agy -p`
+ * "drips" its answer to a TTY, so a piped stdout gets 0 bytes; we run it in a
+ * pseudo-terminal, capture the drip, and strip ANSI.
  */
 export class AgyProcess implements AgyTransport {
   private agyPath: string;
   private resolvedBinary: string | null = null;
   private ptyProc: { kill(): void } | null = null;
 
-  constructor(agyPath = 'agy') {
+  constructor(
+    agyPath = 'agy',
+    private readonly log?: (line: string) => void,
+  ) {
     this.agyPath = agyPath;
   }
 
@@ -53,9 +127,11 @@ export class AgyProcess implements AgyTransport {
   }
 
   async checkAvailability(probe: boolean): Promise<AgyAvailability> {
-    const version = await this.runCapture([this.agyPath, '--version']).catch(
-      () => null,
-    );
+    // Resolve once and use the SAME binary for --version and for send, so a
+    // machine where PATH works but resolution differs can't report an
+    // inconsistent state between the version check and an actual prompt.
+    const bin = await this.resolveBinary();
+    const version = await this.runCapture([bin, '--version']).catch(() => null);
     if (version == null) {
       return {
         found: false,
@@ -65,7 +141,7 @@ export class AgyProcess implements AgyTransport {
     }
     const avail: AgyAvailability = {
       found: true,
-      resolvedPath: await this.resolveBinary(),
+      resolvedPath: bin,
       version: version.trim(),
     };
     if (probe) {
@@ -104,23 +180,13 @@ export class AgyProcess implements AgyTransport {
       );
     }
 
-    const args = ['-p', prompt];
-    if (options.model) args.push('--model', options.model);
-    if (options.printTimeoutSeconds)
-      args.push('--print-timeout', `${options.printTimeoutSeconds}s`);
-    if (options.conversationId)
-      args.push('--conversation', options.conversationId);
-    for (const dir of options.includeDirectories ?? [])
-      args.push('--add-dir', dir);
+    const args = buildAgyArgs(prompt, options);
 
     // conpty needs an absolute path, and can only CreateProcess real
-    // executables — route .cmd/.bat shims through cmd.exe.
-    let bin = await this.resolveBinary();
-    let spawnArgs = args;
-    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
-      spawnArgs = ['/c', bin, ...args];
-      bin = process.env.ComSpec ?? 'cmd.exe';
-    }
+    // executables — route .cmd/.bat shims through cmd.exe with quoted args.
+    const { bin, spawnArgs } = this.buildSpawn(await this.resolveBinary(), args);
+
+    this.log?.(`[SPAWN] ${bin} ${spawnArgs.join(' ')}`);
 
     // Record the current log size so we only scan the region appended during
     // this spawn — avoids returning an old conversation ID from a previous run.
@@ -152,6 +218,7 @@ export class AgyProcess implements AgyTransport {
           /* noop */
         }
         this.ptyProc = null;
+        this.log?.(`[TIMEOUT] after ${effectiveTimeoutSec}s`);
         reject(
           new Error(
             `CalmUI: agy timed out after ${effectiveTimeoutSec}s. ` +
@@ -169,6 +236,7 @@ export class AgyProcess implements AgyTransport {
         clearTimeout(t);
         this.ptyProc = null;
         const conversationId = this.parseConversationId(logOffset);
+        this.log?.(`[EXIT] code=${exitCode} conversation=${conversationId ?? '-'}`);
         resolve({
           text: normalizeDrip(raw),
           conversationId,
@@ -186,12 +254,10 @@ export class AgyProcess implements AgyTransport {
   async listModels(): Promise<AgyModel[]> {
     const output =
       (await this.runPtyCapture(['models'], 10000).catch(() => '')) ||
-      (await this.runCapture([this.agyPath, 'models']).catch(() => ''));
-    return output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((label) => ({ label, value: label }));
+      (await this.runCapture([await this.resolveBinary(), 'models']).catch(
+        () => '',
+      ));
+    return parseModelsOutput(output);
   }
 
   openInteractiveTerminal(prompt?: string): void {
@@ -203,6 +269,23 @@ export class AgyProcess implements AgyTransport {
 
   dispose(): void {
     this.cancel();
+  }
+
+  /**
+   * Decide the actual (bin, args) to spawn. On Windows a `.cmd`/`.bat` shim
+   * cannot be CreateProcess'd by conpty, so route it through cmd.exe with each
+   * argument quoted against cmd metacharacter interpretation.
+   */
+  private buildSpawn(
+    bin: string,
+    args: string[],
+  ): { bin: string; spawnArgs: string[] } {
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
+      const comspec = process.env.ComSpec ?? 'cmd.exe';
+      const quoted = [bin, ...args].map(quoteForCmd);
+      return { bin: comspec, spawnArgs: ['/d', '/s', '/c', ...quoted] };
+    }
+    return { bin, spawnArgs: args };
   }
 
   /** Return the current byte length of the cli.log file, or 0 if absent. */
@@ -226,6 +309,9 @@ export class AgyProcess implements AgyTransport {
    * continuing an existing conversation via --conversation) OR if more than one
    * distinct id appears in the region — a second agy process writing to the same
    * global log concurrently would otherwise bind us to the wrong conversation.
+   *
+   * NOTE: this is a best-effort *labeller* only. Multi-turn no longer depends on
+   * it — when it returns undefined the provider falls back to `-c` (continue).
    */
   private parseConversationId(offsetBytes: number): string | undefined {
     // Cap the scanned region so a large concurrent append can't force an
@@ -302,12 +388,7 @@ export class AgyProcess implements AgyTransport {
       return '';
     }
 
-    let bin = await this.resolveBinary();
-    let spawnArgs = args;
-    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
-      spawnArgs = ['/c', bin, ...args];
-      bin = process.env.ComSpec ?? 'cmd.exe';
-    }
+    const { bin, spawnArgs } = this.buildSpawn(await this.resolveBinary(), args);
 
     return await new Promise<string>((resolve) => {
       let raw = '';

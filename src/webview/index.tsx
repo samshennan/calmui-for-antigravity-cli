@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client';
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ErrorInfo, ReactNode } from 'react';
 import type { ChatMessage, ConversationMeta, HostToWebview, ModelChoice, PanelStatus } from '../shared/messages';
 
 declare const acquireVsCodeApi: () => { postMessage: (m: unknown) => void };
@@ -528,14 +528,27 @@ function statusClass(status: PanelStatus): string {
   return '';
 }
 
+function CopyIcon() {
+  return (
+    <svg width='17' height='17' viewBox='0 0 16 16' fill='none' stroke='currentColor' strokeWidth='1.45' strokeLinecap='round' strokeLinejoin='round'>
+      <rect x='5.4' y='5.4' width='8' height='8' rx='1.3' />
+      <path d='M10.6 5.4V3.7a1.1 1.1 0 0 0-1.1-1.1H3.7a1.1 1.1 0 0 0-1.1 1.1v5.8a1.1 1.1 0 0 0 1.1 1.1h1.7' />
+    </svg>
+  );
+}
+
 function TopBar({
   status,
+  hasMessages,
   onHistory,
   onNewChat,
+  onExport,
 }: {
   status: PanelStatus;
+  hasMessages: boolean;
   onHistory: () => void;
   onNewChat: () => void;
+  onExport: () => void;
 }) {
   return (
     <header className='topbar'>
@@ -544,6 +557,11 @@ function TopBar({
         <span>CalmUI</span>
       </div>
       <div className='toolbar'>
+        {hasMessages && (
+          <IconButton title='Copy conversation as Markdown' onClick={onExport}>
+            <CopyIcon />
+          </IconButton>
+        )}
         <IconButton title='Conversation history' onClick={onHistory}>
           <ClockIcon />
         </IconButton>
@@ -636,8 +654,11 @@ function Composer({
           </IconButton>
           <span className='spacer' />
           {usage !== null && (
-            <span className={usageClass(usage)} title='Estimated context usage'>
-              {formatTokens(usage.usedTokens)} / {formatTokens(usage.maxTokens)}
+            <span
+              className={usageClass(usage)}
+              title="Approximate size of this chat (local estimate — not agy's real context window)"
+            >
+              ≈ {formatTokens(usage.usedTokens)}
             </span>
           )}
           {running ? (
@@ -835,9 +856,12 @@ function ErrorPanel({
       {messages.length > 0 && <TranscriptView messages={messages} errorIds={errorIds} />}
       <div className='status-card'>
         <div className='status-title'>Something went wrong</div>
-        <div style={mutedStyle}>You can retry here or continue in the full Antigravity terminal.</div>
+        <div style={mutedStyle}>You can retry the last prompt, run diagnostics, or continue in the full Antigravity terminal.</div>
         <div className='status-actions'>
-          <button className='text-btn primary' onClick={() => vscodeApi.postMessage({ type: 'runDiagnostics' })}>
+          <button className='text-btn primary' onClick={() => vscodeApi.postMessage({ type: 'retry' })}>
+            Retry
+          </button>
+          <button className='text-btn' onClick={() => vscodeApi.postMessage({ type: 'runDiagnostics' })}>
             Run Diagnostics
           </button>
           <OpenTerminalButton input={input} />
@@ -1063,8 +1087,20 @@ function App() {
   return (
     <main className='app'>
       <Styles />
-      <TopBar status={status} onHistory={toggleHistory} onNewChat={newConversation} />
-      <div ref={contentRef} className={`content${emptyContent ? ' empty' : ''}`}>
+      <TopBar
+        status={status}
+        hasMessages={messages.length > 0}
+        onHistory={toggleHistory}
+        onNewChat={newConversation}
+        onExport={() => vscodeApi.postMessage({ type: 'exportConversation' })}
+      />
+      <div
+        ref={contentRef}
+        className={`content${emptyContent ? ' empty' : ''}`}
+        role='log'
+        aria-live='polite'
+        aria-atomic='false'
+      >
         {panelContent}
       </div>
       {showComposer && (
@@ -1082,4 +1118,55 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+/**
+ * Catches a render/runtime throw anywhere in the panel and shows a recoverable
+ * card instead of a blank webview (which a non-technical user can't diagnose).
+ */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // Surfaces in the webview devtools console; the panel stays usable.
+    console.error('CalmUI panel error:', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main className='app'>
+          <Styles />
+          <div className='content'>
+            <div className='status-card'>
+              <div className='status-title'>The panel hit an error</div>
+              <div style={mutedStyle}>
+                Something in the view crashed. Reload the panel, or continue in the terminal.
+              </div>
+              <div className='status-actions'>
+                <button className='text-btn primary' onClick={() => this.setState({ error: null })}>
+                  Reload panel
+                </button>
+                <button className='text-btn' onClick={() => vscodeApi.postMessage({ type: 'openTerminal' })}>
+                  Open in Terminal
+                </button>
+              </div>
+            </div>
+          </div>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>,
+);

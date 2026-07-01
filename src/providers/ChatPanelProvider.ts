@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
+import * as crypto from 'node:crypto';
 import type { AgyTransport } from '../transport/AgyTransport';
 import type { ChatMessage, ConversationMeta, HostToWebview, ModelChoice, WebviewToHost } from '../shared/messages';
+import {
+  isPermissionHelpQuestion,
+  exportConversationMarkdown,
+  dedupeConversations,
+  buildPanelHtml,
+} from './chatHelpers';
 
 const CONV_STORE_KEY = 'calmui.conversations';
 const MAX_CONVERSATIONS = 50;
@@ -36,17 +43,27 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
    *  single-flight guard and to discard a cancelled/superseded completion. */
   private runningTurn: number | null = null;
   private modelChoices: ModelChoice[] = MODEL_CHOICES;
+  /** True once this panel thread has completed at least one turn. Drives the
+   *  `-c/--continue` fallback so multi-turn survives a missing conversation id. */
+  private threadHasTurns = false;
+  /** The user text of the last turn, for the "Retry" affordance. */
+  private lastPrompt: string | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly transport: AgyTransport,
+    private readonly log?: (line: string) => void,
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = {
       enableScripts: true,
-      localResourceRoots: [this.context.extensionUri],
+      // Restrict what the webview can load to exactly what it needs.
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.context.extensionUri, 'dist'),
+        vscode.Uri.joinPath(this.context.extensionUri, 'media'),
+      ],
     };
     view.webview.html = this.html(view.webview);
 
@@ -99,13 +116,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         const assistantId = `a${++this.turn}`;
         const userId = `u${this.turn}`;
         const myTurn = this.turn;
+        this.lastPrompt = m.text;
 
         // Push user message into host mirror immediately.
         const userMsg: ChatMessage = { id: userId, role: 'user', text: m.text };
         this.messages.push(userMsg);
         this.post({ type: 'message', message: userMsg });
 
-        if (this.isPermissionHelpQuestion(m.text)) {
+        if (isPermissionHelpQuestion(m.text)) {
           const assistantMsg: ChatMessage = {
             id: assistantId,
             role: 'assistant',
@@ -141,6 +159,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             : {}),
           cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
           conversationId: this.conversationId,
+          // When we have no captured id but the thread already had a turn,
+          // continue the most-recent agy conversation instead of resetting.
+          continue: this.conversationId === undefined && this.threadHasTurns,
         };
 
         try {
@@ -176,6 +197,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
           placeholder.text = res.text;
           placeholder.pending = false;
+          // A real turn completed — subsequent turns should continue the thread.
+          this.threadHasTurns = true;
 
           this.post({ type: 'partial', id: assistantId, text: res.text });
           this.post({ type: 'done', id: assistantId });
@@ -232,6 +255,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       case 'newConversation':
         this.conversationId = undefined;
         this.messages = [];
+        this.threadHasTurns = false;
+        this.lastPrompt = undefined;
         this.post({ type: 'hydrate', messages: [] });
         this.post(this.usageMessage());
         void this.refreshState();
@@ -241,9 +266,47 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         if (stored) {
           this.conversationId = stored.id;
           this.messages = [...stored.messages];
+          this.threadHasTurns = stored.messages.some((x) => x.role === 'assistant');
           this.post({ type: 'hydrate', messages: [...stored.messages], conversationId: stored.id });
           this.post(this.usageMessage());
           this.post({ type: 'state', status: 'ready' });
+        }
+        break;
+      }
+      case 'retry': {
+        // Re-send the last user prompt after a failed/empty turn. Drop the
+        // failed assistant placeholder(s) from the tail so the retry is clean.
+        if (this.runningTurn !== null || !this.lastPrompt) break;
+        while (
+          this.messages.length &&
+          this.messages[this.messages.length - 1].role === 'assistant'
+        ) {
+          this.messages.pop();
+        }
+        // Also drop the trailing user message; the send handler re-adds it.
+        if (
+          this.messages.length &&
+          this.messages[this.messages.length - 1].role === 'user'
+        ) {
+          this.messages.pop();
+        }
+        this.post({ type: 'hydrate', messages: [...this.messages], conversationId: this.conversationId });
+        void this.handle({ type: 'send', text: this.lastPrompt });
+        break;
+      }
+      case 'exportConversation': {
+        const title =
+          this.loadAll().find((c) => c.id === this.conversationId)?.title ??
+          this.messages.find((x) => x.role === 'user')?.text?.slice(0, 60) ??
+          'CalmUI conversation';
+        const md = exportConversationMarkdown(title, this.messages);
+        try {
+          await vscode.env.clipboard.writeText(md);
+          void vscode.window.showInformationMessage(
+            'CalmUI: conversation copied to clipboard as Markdown.',
+          );
+        } catch (e) {
+          this.log?.(`[EXPORT] failed: ${e instanceof Error ? e.message : String(e)}`);
         }
         break;
       }
@@ -278,15 +341,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private loadAll(): StoredConversation[] {
     const raw = this.context.workspaceState.get<StoredConversation[]>(CONV_STORE_KEY, []);
-    // Dedupe by id (corrupted/legacy state could hold duplicates), keeping the
-    // newest entry, and return most-recent-first.
-    const byId = new Map<string, StoredConversation>();
-    for (const c of raw) {
-      if (!c || typeof c.id !== 'string') continue;
-      const prev = byId.get(c.id);
-      if (!prev || c.updatedAt > prev.updatedAt) byId.set(c.id, c);
-    }
-    return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    return dedupeConversations(raw);
   }
 
   private loadMetas(): ConversationMeta[] {
@@ -341,23 +396,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.post(this.modelsMessage());
   }
 
-  private isPermissionHelpQuestion(text: string): boolean {
-    const q = text.toLowerCase();
-    const asksAboutPermission =
-      q.includes('permission') ||
-      q.includes('approve') ||
-      q.includes('approval') ||
-      q.includes('accept edit') ||
-      q.includes('file edit') ||
-      q.includes('take actions on my files');
-    const asksHow =
-      q.includes('how') ||
-      q.includes('what') ||
-      q.includes('does agy') ||
-      q.includes('do you ask');
-    return asksAboutPermission && asksHow;
-  }
-
   // ---------------------------------------------------------------------------
 
   private post(msg: HostToWebview): void {
@@ -368,20 +406,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const script = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview.js'),
     );
-    const nonce = String(Date.now());
-    return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CalmUI</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script nonce="${nonce}" type="module" src="${script}"></script>
-</body>
-</html>`;
+    // Unpredictable per-render nonce (not Date.now(), which is guessable).
+    const nonce = crypto.randomBytes(16).toString('base64');
+    return buildPanelHtml(String(script), nonce, webview.cspSource);
   }
 }
