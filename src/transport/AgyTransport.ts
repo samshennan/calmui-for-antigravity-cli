@@ -38,6 +38,13 @@ export interface AgySendOptions {
    * multi-turn. Omit for a fresh conversation (-p only).
    */
   conversationId?: string;
+  /**
+   * Continue the most-recent agy conversation (-c/--continue). Used as the
+   * multi-turn fallback when we have prior turns in this panel thread but could
+   * not confidently capture a conversation id from the shared log. Ignored when
+   * `conversationId` is set (explicit id wins — it is unambiguous).
+   */
+  continue?: boolean;
   /** Working directory for the spawn (defaults to the active workspace root). */
   cwd?: string;
 }
