@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0] - 2026-07-01
+
+Robustness & test-hardening release. No new surface area — the internals are more
+stable, and the risky logic is now backed by an automated test suite (6 → 32 tests).
+
+### Fixed
+- Multi-turn no longer silently resets when the conversation id can't be read from the shared `agy` log. It now falls back to `-c/--continue` so the thread keeps its context; an explicit `--conversation <id>` is still preferred when we have one.
+- The model picker can no longer be corrupted by `agy models` output — the list is parsed defensively (leading model-id token only, headers/prose/blank lines dropped, de-duped) instead of using whole descriptive lines as `--model` values.
+- The `agy` binary is now resolved once and used for both `--version` and prompts, so availability can't disagree with what actually runs.
+- Questions like "how do I set file permissions in Linux" are no longer intercepted by the built-in permission explainer — it now only fires for questions about CalmUI/agy's own approval behaviour.
+
+### Security
+- The webview now uses an unpredictable per-render CSP nonce (crypto random, was a timestamp) and its resource access is restricted to `dist/` and `media/` only (was the whole extension directory). Added an `img-src` directive.
+- On the rare Windows `.cmd`/`.bat` shim path, arguments are now quoted/escaped against `cmd.exe` metacharacter interpretation.
+
+### Added
+- A "Retry" action on the error card re-sends your last prompt.
+- Copy the current conversation to the clipboard as Markdown from the top bar.
+- A "CalmUI" Output Channel logs spawn/exit/timeout events for support.
+- A React error boundary shows a recoverable card instead of a blank panel if the view ever throws.
+- The transcript is an `aria-live` region so streamed replies are announced to screen readers.
+
+### Changed
+- The context meter is relabelled "≈ chat size" to make clear it's a local estimate of the conversation, not agy's real context window.
+
 ## [0.3.0] - 2026-06-12
 
 ### Changed
