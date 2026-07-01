@@ -57,7 +57,11 @@ export type WebviewToHost =
   | { type: 'setModel'; model: string }
   | { type: 'openSettings' }
   | { type: 'openTerminal'; prompt?: string }
-  | { type: 'runDiagnostics' };
+  | { type: 'runDiagnostics' }
+  /** Re-send the last user prompt after a failed/empty turn. */
+  | { type: 'retry' }
+  /** Copy the active conversation to the clipboard as Markdown. */
+  | { type: 'exportConversation' };
 
 export type PanelStatus =
   | 'checking'

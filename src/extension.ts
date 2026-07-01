@@ -7,10 +7,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('calmui-agy');
   const agyPath = config.get<string>('agyPath', 'agy');
 
-  const transport = new AgyProcess(agyPath);
-  const provider = new ChatPanelProvider(context, transport);
+  const output = vscode.window.createOutputChannel('CalmUI');
+  const log = (line: string) => output.appendLine(line);
+
+  const transport = new AgyProcess(agyPath, log);
+  const provider = new ChatPanelProvider(context, transport, log);
 
   context.subscriptions.push(
+    output,
     transport,
     vscode.window.registerWebviewViewProvider('calmui-agy.chatView', provider),
     vscode.commands.registerCommand('calmui-agy.focusChat', () =>
