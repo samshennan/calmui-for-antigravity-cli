@@ -30,19 +30,15 @@ The panel is intentionally read-only. It does not edit files, run shell commands
 
 - Activity-bar side panel for quick `agy` questions
 - Streamed responses from `agy -p` through a real pseudo-terminal
-- Multi-turn conversations that keep context across turns (via `--conversation`/`--continue`)
 - Conversation history saved per workspace
-- Copy the current conversation to the clipboard as Markdown
 - New chat button for fresh context
 - Model switcher populated from `agy models`, with a static fallback
-- "≈ chat size" meter — a local estimate of how big the current conversation is
+- Estimated context meter for the active conversation
 - Settings shortcut in the composer rail
 - Markdown rendering for responses
-- Stop button for canceling an in-flight response, and Retry to re-send the last prompt
+- Stop button for canceling an in-flight response
 - Diagnostics command for binary detection, resolved path, version, and auth probe
-- A "CalmUI" Output Channel that logs spawn/exit/timeout events for troubleshooting
 - Terminal handoff button that opens an interactive `agy` session prefilled with your prompt
-- Accessible: the transcript is announced to screen readers, and a render error shows a recoverable card instead of a blank panel
 
 ## Why A Terminal Handoff?
 
@@ -67,13 +63,13 @@ Download the `.vsix` from GitHub Releases, then install it manually.
 In VS Code:
 
 ```bash
-code --install-extension calmui-for-antigravity-cli-0.4.0.vsix
+code --install-extension calmui-for-antigravity-cli-0.3.0.vsix
 ```
 
 In Antigravity IDE:
 
 ```bash
-antigravity --install-extension calmui-for-antigravity-cli-0.4.0.vsix
+antigravity --install-extension calmui-for-antigravity-cli-0.3.0.vsix
 ```
 
 Reload the editor window, then open CalmUI from the activity bar.
@@ -144,9 +140,7 @@ agy models --help
 
 ### Where are useful logs?
 
-CalmUI's own activity is in the **"CalmUI" Output Channel** (View → Output, then pick "CalmUI"). It records each `agy` spawn, exit code, and timeout — handy to copy when reporting an issue.
-
-Antigravity CLI's own logs are usually at:
+Antigravity CLI logs are usually at:
 
 ```text
 ~/.gemini/antigravity-cli/cli.log
@@ -187,7 +181,9 @@ Near-term:
 - Better terminal handoff with model, context, and conversation continuity where possible
 - File/current-selection context for quick asks
 - File/image attach chips sent as explicit path references
-- Conversation rename/delete (export shipped in 0.4.0)
+- Dynamic model discovery from `agy models`, with static fallback
+- Conversation rename/delete/export
+- Context meter color thresholds and warnings
 - Troubleshooting log viewer for `cli.log`
 
 Later:
